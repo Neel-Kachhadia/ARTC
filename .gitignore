@@ -1,0 +1,46 @@
+# Build
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+
+# Sanitizers / profiling
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+core
+core.*
+
+# Generated benchmark data
+artifacts/raw/
+bench/results/local/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary
+*.tmp
+*.log
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,106 @@
+name: artc-phase1
+
+services:
+  service-b:
+    image: artc-phase1:local
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+    command: ["/opt/artc/bin/artc_lab_node", "service-b", "0.0.0.0:50052", "service-b", "0"]
+    init: true
+    cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "/opt/artc/bin/artc_loadgen", "--health", "--target", "127.0.0.1:50052"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  a1:
+    image: artc-phase1:local
+    command: ["/opt/artc/bin/artc_lab_node", "service-a", "0.0.0.0:50051", "A1", "0", "service-b:50052"]
+    init: true
+    cpus: "1.0"
+    cap_add: [NET_ADMIN]
+    depends_on:
+      service-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/artc/bin/artc_loadgen", "--health", "--target", "127.0.0.1:50051"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  a2:
+    image: artc-phase1:local
+    command: ["/opt/artc/bin/artc_lab_node", "service-a", "0.0.0.0:50051", "A2", "0", "service-b:50052"]
+    init: true
+    cpus: "1.0"
+    cap_add: [NET_ADMIN]
+    depends_on:
+      service-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/artc/bin/artc_loadgen", "--health", "--target", "127.0.0.1:50051"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  a3:
+    image: artc-phase1:local
+    command: ["/opt/artc/bin/artc_lab_node", "service-a", "0.0.0.0:50051", "A3", "0", "service-b:50052"]
+    init: true
+    cpus: "1.0"
+    cap_add: [NET_ADMIN]
+    depends_on:
+      service-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/artc/bin/artc_loadgen", "--health", "--target", "127.0.0.1:50051"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  router:
+    image: artc-phase1:local
+    command:
+      - /opt/artc/bin/artc_lab_node
+      - router
+      - 0.0.0.0:50050
+      - ${ARTC_ROUTING_POLICY:-round_robin}
+      - "17"
+      - "0.2"
+      - A1=a1:50051
+      - A2=a2:50051
+      - A3=a3:50051
+    init: true
+    cpus: "1.0"
+    depends_on:
+      a1:
+        condition: service_healthy
+      a2:
+        condition: service_healthy
+      a3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/artc/bin/artc_loadgen", "--health", "--target", "127.0.0.1:50050"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  loadgen:
+    image: artc-phase1:local
+    entrypoint: ["/opt/artc/bin/artc_loadgen"]
+    profiles: [tools]
+    environment:
+      ARTC_RUN_ID: ${ARTC_RUN_ID:-local}
+      ARTC_GIT_REVISION: ${ARTC_GIT_REVISION:-unknown}
+      ARTC_WORKTREE_DIRTY: ${ARTC_WORKTREE_DIRTY:-unknown}
+      ARTC_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-artc-phase1}
+      ARTC_ROUTING_POLICY: ${ARTC_ROUTING_POLICY:-unknown}
+    volumes:
+      - ../artifacts/runs:/artifacts

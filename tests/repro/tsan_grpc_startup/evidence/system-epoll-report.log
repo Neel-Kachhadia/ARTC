@@ -1,0 +1,24 @@
+phase=build_start_begin
+==================
+WARNING: ThreadSanitizer: data race (pid=54)
+  Read of size 8 at 0x72b0000000a0 by thread T4:
+    #0 epoll_wait ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1962 (libtsan.so.2+0x5a47b) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 grpc_event_engine::posix_engine::Epoll1Poller::DoEpollWait(std::chrono::duration<long, std::ratio<1l, 1000000000l> >) <null> (libgrpc.so.29+0x2df1c5) (BuildId: e1e67da785c1a52e475a0515e9fe1bff0717d22b)
+
+  Previous write of size 8 at 0x72b0000000a0 by main thread:
+    #0 epoll_create1 ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1940 (libtsan.so.2+0x556a8) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 grpc_event_engine::posix_engine::Epoll1Poller::Epoll1Poller(grpc_event_engine::posix_engine::Scheduler*) <null> (libgrpc.so.29+0x2d9d4a) (BuildId: e1e67da785c1a52e475a0515e9fe1bff0717d22b)
+    #2 __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58 (libc.so.6+0x2a1c9) (BuildId: a4a7992a8e66555c8141ab2a08a8465ff6e0ea65)
+
+  Location is file descriptor 5 created by main thread at:
+    #0 epoll_create1 ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1940 (libtsan.so.2+0x556a8) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 grpc_event_engine::posix_engine::Epoll1Poller::Epoll1Poller(grpc_event_engine::posix_engine::Scheduler*) <null> (libgrpc.so.29+0x2d9d4a) (BuildId: e1e67da785c1a52e475a0515e9fe1bff0717d22b)
+    #2 __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58 (libc.so.6+0x2a1c9) (BuildId: a4a7992a8e66555c8141ab2a08a8465ff6e0ea65)
+
+  Thread T4 'event_engine' (tid=59, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 grpc_core::Thread::Thread(char const*, void (*)(void*), void*, bool*, grpc_core::Thread::Options const&) <null> (libgpr.so.29+0xa691) (BuildId: 258c054520b330b2b4107bb22694e972099eba82)
+    #2 __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58 (libc.so.6+0x2a1c9) (BuildId: a4a7992a8e66555c8141ab2a08a8465ff6e0ea65)
+
+SUMMARY: ThreadSanitizer: data race (/lib/x86_64-linux-gnu/libgrpc.so.29+0x2df1c5) (BuildId: e1e67da785c1a52e475a0515e9fe1bff0717d22b) in grpc_event_engine::posix_engine::Epoll1Poller::DoEpollWait(std::chrono::duration<long, std::ratio<1l, 1000000000l> >)
+==================

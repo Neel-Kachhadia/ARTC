@@ -1,0 +1,77 @@
+Internal ctest changing into directory: /home/neel/Projects/ARTC-SWE/ARTC/build/tsan
+UpdateCTestConfiguration  from :/home/neel/Projects/ARTC-SWE/ARTC/build/tsan/DartConfiguration.tcl
+Parse Config file:/home/neel/Projects/ARTC-SWE/ARTC/build/tsan/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/home/neel/Projects/ARTC-SWE/ARTC/build/tsan/DartConfiguration.tcl
+Parse Config file:/home/neel/Projects/ARTC-SWE/ARTC/build/tsan/DartConfiguration.tcl
+Test project /home/neel/Projects/ARTC-SWE/ARTC/build/tsan
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 24
+    Start 24: RpcServicesTest.HealthReportsReadyComponentIdentity
+
+24: Test command: /home/neel/Projects/ARTC-SWE/ARTC/build/tsan/artc_integration_tests "--gtest_filter=RpcServicesTest.HealthReportsReadyComponentIdentity" "--gtest_also_run_disabled_tests"
+24: Working Directory: /home/neel/Projects/ARTC-SWE/ARTC/build/tsan
+24: Test timeout computed to be: 1500
+24: Running main() from /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest_main.cc
+24: Note: Google Test filter = RpcServicesTest.HealthReportsReadyComponentIdentity
+24: [==========] Running 1 test from 1 test suite.
+24: [----------] Global test environment set-up.
+24: [----------] 1 test from RpcServicesTest
+24: [ RUN      ] RpcServicesTest.HealthReportsReadyComponentIdentity
+24: ==================
+24: WARNING: ThreadSanitizer: data race (pid=173119)
+24:   Read of size 8 at 0x7ffff46a8380 by thread T3:
+24:     #0 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:98 (libtsan.so.2+0x8bbd0) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+24:     #1 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:96 (libtsan.so.2+0x8bbd0)
+24:     #2 absl::debian3::synchronization_internal::GraphCycles::GetId(void*) <null> (libabsl_graphcycles_internal.so.20220623+0x31d9) (BuildId: 1dae8c73ec771753731fe7dfaa32cc0fed4e69df)
+24:
+24:   Previous write of size 8 at 0x7ffff46a8380 by main thread:
+24:     #0 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:98 (libtsan.so.2+0x8bbd0) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+24:     #1 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:96 (libtsan.so.2+0x8bbd0)
+24:     #2 absl::debian3::synchronization_internal::GraphCycles::GetId(void*) <null> (libabsl_graphcycles_internal.so.20220623+0x31d9) (BuildId: 1dae8c73ec771753731fe7dfaa32cc0fed4e69df)
+24:     #3 TestBody /home/neel/Projects/ARTC-SWE/ARTC/tests/integration/rpc_services_test.cc:101 (artc_integration_tests+0x199c2) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #4 void testing::internal::HandleSehExceptionsInMethodIfSupported<testing::Test, void>(testing::Test*, void (testing::Test::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2612 (artc_integration_tests+0xdbc74) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #5 void testing::internal::HandleExceptionsInMethodIfSupported<testing::Test, void>(testing::Test*, void (testing::Test::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2648 (artc_integration_tests+0xcf198) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #6 testing::Test::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2687 (artc_integration_tests+0x9bedf) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #7 testing::TestInfo::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2836 (artc_integration_tests+0x9cd28) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #8 testing::TestSuite::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:3015 (artc_integration_tests+0x9db69) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #9 testing::internal::UnitTestImpl::RunAllTests() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:5920 (artc_integration_tests+0xaf9df) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #10 bool testing::internal::HandleSehExceptionsInMethodIfSupported<testing::internal::UnitTestImpl, bool>(testing::internal::UnitTestImpl*, bool (testing::internal::UnitTestImpl::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2612 (artc_integration_tests+0xde095) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #11 bool testing::internal::HandleExceptionsInMethodIfSupported<testing::internal::UnitTestImpl, bool>(testing::internal::UnitTestImpl*, bool (testing::internal::UnitTestImpl::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2648 (artc_integration_tests+0xd10c0) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #12 testing::UnitTest::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:5484 (artc_integration_tests+0xad7a7) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #13 RUN_ALL_TESTS() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/include/gtest/gtest.h:2317 (artc_integration_tests+0x5fd10) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #14 main /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest_main.cc:64 (artc_integration_tests+0x5fcb2) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:
+24:   Thread T3 'grpc_global_tim' (tid=173123, running) created by main thread at:
+24:     #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+24:     #1 grpc_core::Thread::Thread(char const*, void (*)(void*), void*, bool*, grpc_core::Thread::Options const&) <null> (libgpr.so.29+0xa691) (BuildId: 258c054520b330b2b4107bb22694e972099eba82)
+24:     #2 TestBody /home/neel/Projects/ARTC-SWE/ARTC/tests/integration/rpc_services_test.cc:101 (artc_integration_tests+0x199c2) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #3 void testing::internal::HandleSehExceptionsInMethodIfSupported<testing::Test, void>(testing::Test*, void (testing::Test::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2612 (artc_integration_tests+0xdbc74) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #4 void testing::internal::HandleExceptionsInMethodIfSupported<testing::Test, void>(testing::Test*, void (testing::Test::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2648 (artc_integration_tests+0xcf198) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #5 testing::Test::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2687 (artc_integration_tests+0x9bedf) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #6 testing::TestInfo::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2836 (artc_integration_tests+0x9cd28) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #7 testing::TestSuite::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:3015 (artc_integration_tests+0x9db69) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #8 testing::internal::UnitTestImpl::RunAllTests() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:5920 (artc_integration_tests+0xaf9df) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #9 bool testing::internal::HandleSehExceptionsInMethodIfSupported<testing::internal::UnitTestImpl, bool>(testing::internal::UnitTestImpl*, bool (testing::internal::UnitTestImpl::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2612 (artc_integration_tests+0xde095) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #10 bool testing::internal::HandleExceptionsInMethodIfSupported<testing::internal::UnitTestImpl, bool>(testing::internal::UnitTestImpl*, bool (testing::internal::UnitTestImpl::*)(), char const*) /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:2648 (artc_integration_tests+0xd10c0) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #11 testing::UnitTest::Run() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest.cc:5484 (artc_integration_tests+0xad7a7) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #12 RUN_ALL_TESTS() /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/include/gtest/gtest.h:2317 (artc_integration_tests+0x5fd10) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:     #13 main /home/neel/Projects/ARTC-SWE/ARTC/build/debug/_deps/googletest-src/googletest/src/gtest_main.cc:64 (artc_integration_tests+0x5fcb2) (BuildId: 1f63f5917889b42c8e58ebb46b5db42302356daf)
+24:
+24: SUMMARY: ThreadSanitizer: data race ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:98 in memmove
+24: ==================
+1/1 Test #24: RpcServicesTest.HealthReportsReadyComponentIdentity ...***Failed    0.11 sec
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   0.11 sec
+
+The following tests FAILED:
+	 24 - RpcServicesTest.HealthReportsReadyComponentIdentity (Failed)
+Errors while running CTest
+Output from these tests are in: /home/neel/Projects/ARTC-SWE/ARTC/build/tsan/Testing/Temporary/LastTest.log
+Use "--rerun-failed --output-on-failure" to re-run the failed cases verbosely.

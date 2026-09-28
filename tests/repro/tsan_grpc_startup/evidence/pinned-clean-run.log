@@ -1,0 +1,6 @@
+phase=build_start_begin
+phase=build_start_end port=41557
+phase=client_call_begin
+phase=client_call_end status=0
+phase=shutdown_begin
+phase=shutdown_end

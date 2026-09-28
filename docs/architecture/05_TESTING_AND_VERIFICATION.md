@@ -177,7 +177,7 @@ Property tests must include generated boundary configurations.
 
 ## 6. Fault-injection tests
 
-Every fault ID in `04_FAILURE_MODEL_AND_FAULT_LAB.md` receives one of:
+Every fault ID in `../failures/04_FAILURE_MODEL_AND_FAULT_LAB.md` receives one of:
 
 - deterministic unit/test-hook reproduction;
 - real integration fault injection;

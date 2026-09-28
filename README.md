@@ -23,20 +23,20 @@ ARTC is not a generic reverse proxy and it is not a feature-count project. It is
 
 ## Architecture pack
 
-- `01_SYSTEM_ARCHITECTURE.md` — system boundaries, runtime topology, component responsibilities.
-- `02_REQUEST_LIFECYCLE_AND_CONTROL.md` — precedence, state machine, controller timescales, deadlines, attempts.
-- `03_INVARIANTS_AND_CORRECTNESS.md` — executable safety properties and ownership rules.
-- `04_FAILURE_MODEL_AND_FAULT_LAB.md` — single faults, compound faults, recovery, deterministic injection.
-- `05_TESTING_AND_VERIFICATION.md` — unit, deterministic concurrency, sanitizers, fuzzing, property testing, soak/stress.
-- `06_BENCHMARK_METHODOLOGY.md` — open-loop generator, coordinated omission, baselines, ablations, statistics.
-- `07_OBSERVABILITY_AND_OPERATIONS.md` — metrics, tracing, diagnostics, startup/shutdown, resource accounting.
-- `08_SECURITY_AND_ROBUSTNESS.md` — malformed input, cardinality, resource exhaustion, configuration safety.
-- `09_CI_RELEASE_GATES.md` — PR, nightly, release candidate, performance-regression gates.
-- `10_IMPLEMENTATION_PLAN.md` — four implementation phases with hard exit criteria.
-- `11_REPOSITORY_LAYOUT.md` — source/test/lab/artifact structure and engineering standards.
-- `12_TRACEABILITY_MATRIX.md` — requirement → invariant → telemetry → tests → evidence.
-- `13_INTERVIEW_READINESS.md` — deep-dive paths, experiment stories, design questions, resume evidence.
-- `14_REFERENCES.md` — foundational systems and tooling references.
+- [System architecture](docs/architecture/01_SYSTEM_ARCHITECTURE.md) — boundaries, topology, responsibilities.
+- [Request lifecycle](docs/architecture/02_REQUEST_LIFECYCLE_AND_CONTROL.md) — precedence, deadlines, attempts.
+- [Invariants](docs/architecture/03_INVARIANTS_AND_CORRECTNESS.md) — safety properties and ownership.
+- [Fault model](docs/failures/04_FAILURE_MODEL_AND_FAULT_LAB.md) — deterministic faults and recovery.
+- [Testing](docs/architecture/05_TESTING_AND_VERIFICATION.md) — verification layers and release evidence.
+- [Benchmark methodology](docs/architecture/06_BENCHMARK_METHODOLOGY.md) — open-loop load and statistical discipline.
+- [Observability](docs/architecture/07_OBSERVABILITY_AND_OPERATIONS.md) — metrics, diagnostics, lifecycle.
+- [Security](docs/architecture/08_SECURITY_AND_ROBUSTNESS.md) — input and resource bounds.
+- [CI gates](docs/architecture/09_CI_RELEASE_GATES.md) — presubmit, nightly, and release criteria.
+- [Implementation plan](docs/architecture/10_IMPLEMENTATION_PLAN.md) — phased scope and exit gates.
+- [Repository layout](docs/architecture/11_REPOSITORY_LAYOUT.md) — module boundaries and standards.
+- [Traceability](docs/architecture/12_TRACEABILITY_MATRIX.md) — requirements to tests and evidence.
+- [Interview readiness](docs/interview/13_INTERVIEW_READINESS.md) — technical deep dives and evidence.
+- [References](docs/architecture/14_REFERENCES.md) — systems and tooling sources.
 
 ## Scope for V1
 

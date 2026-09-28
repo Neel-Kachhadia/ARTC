@@ -1,0 +1,57 @@
+Fully source-built old-stack TSan control
+=========================================
+
+The minimal callback RPC reproducer was built without ARTC against the exact
+gRPC v1.51.1 release checkout and its direct dependency gitlinks. All gRPC,
+Abseil, Protobuf, BoringSSL, c-ares, RE2, and zlib C/C++ dependency objects in
+the resulting binary were TSan-instrumented and statically linked. The TSan,
+libstdc++, and libc runtimes remain dynamic.
+
+Source revisions:
+  gRPC v1.51.1       0a82c02a9b817a53574994374dcff53f2e961df2
+  Abseil submodule   273292d1cfc0a94a65082ee350509af1d113344d
+  Protobuf submodule 24487dd1045c7f3d64a21f38a3f0c06cc4cf2edb
+  BoringSSL          b9232f9e27e5668bc0414879dcdedb2a59ea75f2
+  c-ares             6654436a307a5a686b008c1d4c93b0085da6e6d8
+  RE2                8e08f47b11b413302749c0d8b17a1c94777495d5
+  xDS                cb28da3451f158a947dfc45090fe92b07b243bc1
+  zlib               04f42ceca40f73e2978b50e93806c2a18c1281fc
+
+Toolchain/configuration:
+  OS: Ubuntu 24.04
+  GCC: 13.3.0
+  CMake: 3.28.3
+  build type: Debug
+  gRPC/dependency C++ standard: C++17
+  minimal reproducer target: C++23
+  C/C++ flags: -fsanitize=thread -fno-omit-frame-pointer -g
+  executable linker flags: -fsanitize=thread
+  TSAN_OPTIONS: halt_on_error=1:history_size=7
+  binary SHA-256: e079787030c25d3220f1b87cef375e542ccddc90dbd0edbdcd21289de60749b2
+  ELF Build ID: 6ff2c4b6dc73f6535b0f4b33599887f1b81bc38b
+  dynamic dependencies: old-source-ldd.txt (only libtsan, libstdc++, libc/runtime)
+
+The first attempt to compile every gRPC v1.51.1 dependency as C++23 failed in
+Abseil 20220623 at `absl/time/clock.cc:199` (`constinit` with a non-literal
+SpinLock) under GCC 13.3. The controlled old-stack build uses gRPC's C++17
+source mode, while the reproducer target itself remains C++23. This matches
+the older library's supported source mode and keeps the application standard
+under test.
+
+Results from 130 fresh processes:
+  clean startup/call/shutdown: 124
+  TSan reports:                6
+  other failures:              0
+
+All six reports have the same Abseil startup signature: main-thread
+`Waiter::Post()` atomic write in `absl::synchronization_internal` overlaps a
+TSan-observed `mmap` write from `LowLevelAlloc` while a gRPC default-executor
+thread initializes its `ThreadIdentity` and enters `CondVar::WaitCommon`.
+The program contains no ARTC code. The complete representative report is in
+`old-source-startup-race.txt`; individual reports are retained in
+`/tmp/artc-tsan-oldsource-1511-cxx17deps-runs/`.
+
+This establishes that the old source stack itself can produce a TSan startup
+report when fully instrumented. It does not prove the report is a source-level
+memory-safety defect: the observed write comes from TSan's mmap interceptor,
+and its signature differs from the packaged GraphCycles/epoll reports.

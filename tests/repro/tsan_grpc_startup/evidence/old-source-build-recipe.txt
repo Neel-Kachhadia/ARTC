@@ -1,0 +1,41 @@
+Old source-stack build recipe
+============================
+
+1. Clone the official tag and initialize only its direct build dependencies:
+
+   git clone --depth 1 --branch v1.51.1 https://github.com/grpc/grpc.git /tmp/artc-grpc-v1.51.1
+   git -C /tmp/artc-grpc-v1.51.1 submodule update --init --depth 1 -- \
+     third_party/abseil-cpp third_party/protobuf third_party/boringssl-with-bazel \
+     third_party/cares/cares third_party/re2 third_party/zlib third_party/xds
+
+2. Copy main.cc and probe.proto into a temporary directory. Copy this repro's
+   CMakeLists.txt and make two edits in that copy:
+     - set CMAKE_CXX_STANDARD to 17 before add_subdirectory(gRPC)
+     - after linking tsan_grpc_startup, add:
+         target_compile_features(tsan_grpc_startup PRIVATE cxx_std_23)
+   This keeps all gRPC dependency targets at C++17 and the test application
+   target at C++23. No dependency source is patched.
+
+3. Configure and build the copied project:
+
+   cmake -S /tmp/artc-tsan-oldsource-1511-cxx17deps \
+     -B /tmp/artc-tsan-oldsource-1511-cxx17deps-build \
+     -DARTC_GRPC_SOURCE_DIR=/tmp/artc-grpc-v1.51.1 \
+     -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=11 \
+     -DCMAKE_CXX_STANDARD_REQUIRED=ON \
+     -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+     -DCMAKE_C_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' \
+     -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' \
+     -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread \
+     -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=thread
+   setarch x86_64 --addr-no-randomize cmake --build \
+     /tmp/artc-tsan-oldsource-1511-cxx17deps-build \
+     --target tsan_grpc_startup --parallel 6
+
+4. Run fresh processes and classify TSan reports without suppressions:
+
+   TSAN_OPTIONS=halt_on_error=1:history_size=7
+   setarch x86_64 --addr-no-randomize \
+     /tmp/artc-tsan-oldsource-1511-cxx17deps-build/tsan_grpc_startup
+
+The recorded 130-process logs are in /tmp/artc-tsan-oldsource-1511-cxx17deps-runs/.

@@ -24,7 +24,7 @@ This file prevents ARTC from becoming a pile of disconnected tests. Every critic
 
 ## Fault-model traceability
 
-Before release, every fault ID from `04_FAILURE_MODEL_AND_FAULT_LAB.md` must appear in a generated or maintained coverage table:
+Before release, every fault ID from `../failures/04_FAILURE_MODEL_AND_FAULT_LAB.md` must appear in a generated or maintained coverage table:
 
 ```text
 fault_id

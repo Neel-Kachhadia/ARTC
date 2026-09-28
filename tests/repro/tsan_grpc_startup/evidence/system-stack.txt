@@ -1,0 +1,58 @@
+Failing ARTC test
+=================
+Binary: build/tsan/artc_integration_tests
+SHA-256: d33c1731d4a8eb5d4ab79b0a5eb1ef84d533b4cbe86a1ea607b95f3233598d0d
+ELF Build ID: 1f63f5917889b42c8e58ebb46b5db42302356daf
+Test: RpcServicesTest.HealthReportsReadyComponentIdentity
+Command:
+  TSAN_OPTIONS=halt_on_error=1:history_size=7 setarch x86_64 --addr-no-randomize \
+    ctest --test-dir build/tsan -R \
+    '^RpcServicesTest.HealthReportsReadyComponentIdentity$' -V
+
+Report: artc-system-health-report.log (complete TSan output)
+Linked libraries: artc-system-ldd.txt (complete ldd output)
+System reproducer linked libraries: system-reproducer-ldd.txt
+
+Toolchain and configuration
+===========================
+OS: Ubuntu 24.04
+gRPC packages: 1.51.1-4.1build5
+Protobuf packages: 3.21.12-8.2ubuntu0.3
+Abseil packages: 20220623.1-3.1ubuntu3.2
+GCC: g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+CMake: 3.28.3
+Configure: CMAKE_BUILD_TYPE=Debug, BUILD_TESTING=ON
+Generator: Ninja
+Project language standard: C++23
+Compilers: /usr/bin/cc and /usr/bin/c++ (GCC 13.3.0)
+C flags: -fsanitize=thread -fno-omit-frame-pointer
+C++ flags: -fsanitize=thread -fno-omit-frame-pointer
+Effective Debug/C++ flags also include -g and -std=c++23.
+Executable linker flags: -fsanitize=thread
+TSAN_OPTIONS: halt_on_error=1:history_size=7
+
+Report interpretation
+=====================
+The 8-byte read and prior 8-byte write at the reported address both resolve
+to memmove intercepted by TSan inside Abseil GraphCycles::GetId. The reader is
+T3 (grpc_global_tim), created by grpc_core::Thread through pthread_create; the
+writer is the main thread. The report records no mutex or synchronization
+acquisition for the two accesses. The user-code frame is the call to
+ServerBuilder::BuildAndStart() at rpc_services_test.cc:101. It occurs before
+BuildAndStart returns and before the health RPC, callback reactor, alarm, or
+client channel is used.
+
+The matching standalone system-stack reproducer report is
+system-graphcycles-report.log. The other observed system-stack report,
+system-epoll-report.log, concerns gRPC's Epoll1Poller during the same startup.
+
+Instrumentation check
+=====================
+The Ubuntu libabsl_graphcycles_internal.so.20220623 and libgrpc.so.29 expose
+no __tsan_* references. The pinned source-built
+libabsl_graphcycles_internal.a contains __tsan instrumentation references,
+including __tsan_atomic* and __tsan_mutex* hooks. The upstream Abseil sanitizer
+guidance warns that mixing sanitizer-instrumented project code with
+uninstrumented prebuilt libraries can produce incorrect sanitizer reports
+and recommends avoiding precompiled system libraries:
+https://github.com/abseil/abseil-cpp/blob/76bb24329e8bf5f39704eb10d21b9a80befa7c81/FAQ.md#how-do-i-use-the-llvm-sanitizers-with-abseil

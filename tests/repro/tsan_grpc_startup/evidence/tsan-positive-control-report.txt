@@ -1,0 +1,34 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=333848)
+  Write of size 4 at 0x555555559044 by thread T2:
+    #0 operator() /tmp/artc-tsan-positive-control.cc:9 (artc-tsan-positive-control+0x2992) (BuildId: 85d3f71a33ae609dd9f7c14fa84ef0dae52fbaae)
+    #1 __invoke_impl<void, main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:61 (artc-tsan-positive-control+0x2992)
+    #2 __invoke<main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:96 (artc-tsan-positive-control+0x2992)
+    #3 _M_invoke<0> /usr/include/c++/13/bits/std_thread.h:292 (artc-tsan-positive-control+0x2992)
+    #4 operator() /usr/include/c++/13/bits/std_thread.h:299 (artc-tsan-positive-control+0x2992)
+    #5 _M_run /usr/include/c++/13/bits/std_thread.h:244 (artc-tsan-positive-control+0x2992)
+    #6 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Previous read of size 4 at 0x555555559044 by thread T1:
+    #0 operator() /tmp/artc-tsan-positive-control.cc:9 (artc-tsan-positive-control+0x296e) (BuildId: 85d3f71a33ae609dd9f7c14fa84ef0dae52fbaae)
+    #1 __invoke_impl<void, main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:61 (artc-tsan-positive-control+0x296e)
+    #2 __invoke<main()::<lambda()> > /usr/include/c++/13/bits/invoke.h:96 (artc-tsan-positive-control+0x296e)
+    #3 _M_invoke<0> /usr/include/c++/13/bits/std_thread.h:292 (artc-tsan-positive-control+0x296e)
+    #4 operator() /usr/include/c++/13/bits/std_thread.h:299 (artc-tsan-positive-control+0x296e)
+    #5 _M_run /usr/include/c++/13/bits/std_thread.h:244 (artc-tsan-positive-control+0x296e)
+    #6 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Location is global 'counter' of size 4 at 0x555555559044 (artc-tsan-positive-control+0x5044)
+
+  Thread T2 (tid=333851, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 main /tmp/artc-tsan-positive-control.cc:12 (artc-tsan-positive-control+0x2851) (BuildId: 85d3f71a33ae609dd9f7c14fa84ef0dae52fbaae)
+
+  Thread T1 (tid=333850, finished) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 main /tmp/artc-tsan-positive-control.cc:11 (artc-tsan-positive-control+0x2815) (BuildId: 85d3f71a33ae609dd9f7c14fa84ef0dae52fbaae)
+
+SUMMARY: ThreadSanitizer: data race /tmp/artc-tsan-positive-control.cc:9 in operator()
+==================

@@ -1,0 +1,36 @@
+system gRPC 1.51.1 / Abseil 20220623.1 standalone callback startup reproducer
+fresh processes: 30
+absl-graphcycles: 22
+grpc-epoll-poller: 8
+report before BuildAndStart returned: 30/30
+per-run:
+run-001.log absl-graphcycles begin=True end=False
+run-002.log absl-graphcycles begin=True end=False
+run-003.log absl-graphcycles begin=True end=False
+run-004.log grpc-epoll-poller begin=True end=False
+run-005.log absl-graphcycles begin=True end=False
+run-006.log grpc-epoll-poller begin=True end=False
+run-007.log absl-graphcycles begin=True end=False
+run-008.log absl-graphcycles begin=True end=False
+run-009.log absl-graphcycles begin=True end=False
+run-010.log absl-graphcycles begin=True end=False
+run-011.log absl-graphcycles begin=True end=False
+run-012.log grpc-epoll-poller begin=True end=False
+run-013.log absl-graphcycles begin=True end=False
+run-014.log absl-graphcycles begin=True end=False
+run-015.log absl-graphcycles begin=True end=False
+run-016.log absl-graphcycles begin=True end=False
+run-017.log absl-graphcycles begin=True end=False
+run-018.log grpc-epoll-poller begin=True end=False
+run-019.log grpc-epoll-poller begin=True end=False
+run-020.log absl-graphcycles begin=True end=False
+run-021.log grpc-epoll-poller begin=True end=False
+run-022.log absl-graphcycles begin=True end=False
+run-023.log absl-graphcycles begin=True end=False
+run-024.log grpc-epoll-poller begin=True end=False
+run-025.log absl-graphcycles begin=True end=False
+run-026.log absl-graphcycles begin=True end=False
+run-027.log grpc-epoll-poller begin=True end=False
+run-028.log absl-graphcycles begin=True end=False
+run-029.log absl-graphcycles begin=True end=False
+run-030.log absl-graphcycles begin=True end=False

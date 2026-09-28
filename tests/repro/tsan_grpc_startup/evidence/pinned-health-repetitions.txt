@@ -1,0 +1,9 @@
+Test: RpcServicesTest.HealthReportsReadyComponentIdentity
+Binary: build/pinned-tsan/artc_integration_tests
+SHA-256: e28d620980d52f4894b605e1cb3bd62389835e68f1d59476b0920b2a907bcef4
+ELF Build ID: f1131b08ccdea149047566c99dbfafec9720308d
+Fresh processes: 30
+Passed: 30
+TSan reports: 0
+TSAN_OPTIONS=halt_on_error=1:history_size=7
+Per-process logs: /tmp/artc-pinned-tsan-health-repeat/

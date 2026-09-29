@@ -2,9 +2,12 @@
 
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -16,6 +19,63 @@ using namespace std::chrono_literals;
 std::string address_for(int port) {
   return "127.0.0.1:" + std::to_string(port);
 }
+
+std::vector<std::string> trailing_values(const grpc::ClientContext& context,
+                                         std::string_view name) {
+  std::vector<std::string> values;
+  for (const auto& [key, value] : context.GetServerTrailingMetadata()) {
+    if (std::string_view(key.data(), key.size()) == name) {
+      values.emplace_back(value.data(), value.size());
+    }
+  }
+  return values;
+}
+
+class BlockingBackend final : public artc::v1::Traffic::CallbackService {
+ public:
+  grpc::ServerUnaryReactor* Execute(grpc::CallbackServerContext* context,
+                                    const artc::v1::WorkRequest* request,
+                                    artc::v1::WorkResponse* response) override {
+    {
+      std::unique_lock lock(mutex_);
+      entered_ = true;
+      changed_.notify_all();
+      changed_.wait(lock, [this] { return released_; });
+    }
+    response->set_request_id(request->request_id());
+    response->set_replica_id("A1");
+    auto* reactor = context->DefaultReactor();
+    reactor->Finish(grpc::Status::OK);
+    return reactor;
+  }
+
+  grpc::ServerUnaryReactor* Health(grpc::CallbackServerContext* context,
+                                   const artc::v1::HealthRequest*,
+                                   artc::v1::HealthResponse* response) override {
+    response->set_ready(true);
+    response->set_component_id("A1");
+    auto* reactor = context->DefaultReactor();
+    reactor->Finish(grpc::Status::OK);
+    return reactor;
+  }
+
+  bool wait_until_entered(std::chrono::milliseconds timeout) {
+    std::unique_lock lock(mutex_);
+    return changed_.wait_for(lock, timeout, [this] { return entered_; });
+  }
+
+  void release() {
+    std::lock_guard lock(mutex_);
+    released_ = true;
+    changed_.notify_all();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  bool entered_{false};
+  bool released_{false};
+};
 
 grpc::Status execute(const std::string& address,
                      const artc::v1::WorkRequest& request,
@@ -141,6 +201,74 @@ TEST(RpcServicesTest, ServiceACancellationCompletesAndAllowsSubsequentCalls) {
   const auto status = stub->Execute(&context, request, &response);
   ASSERT_TRUE(status.ok()) << status.error_message();
   EXPECT_EQ(response.request_id(), 34U);
+}
+
+TEST(RpcServicesTest, AdaptiveAdmissionRejectsBeforeDispatchAndExplainsAcceptedRoute) {
+  BlockingBackend backend;
+  int backend_port = 0;
+  auto backend_server = artc::rpc::start_server("127.0.0.1:0", backend,
+                                               &backend_port);
+  artc::control::ControllerConfig config;
+  config.aimd.min_limit = 1;
+  config.aimd.max_limit = 1;
+  config.aimd.initial_limit = 1;
+  config.decision_sample_every = 1;
+  std::vector<artc::rpc::ReplicaConfig> replicas{
+      {"A1", address_for(backend_port)}};
+  artc::rpc::RouterService router(replicas, artc::routing::Policy::kArtcAdaptive,
+                                  17, 0.2, config);
+  int router_port = 0;
+  auto router_server = artc::rpc::start_server("127.0.0.1:0", router,
+                                               &router_port);
+  const auto address = address_for(router_port);
+
+  grpc::ClientContext accepted_context;
+  accepted_context.set_deadline(std::chrono::system_clock::now() + 2s);
+  artc::v1::WorkRequest accepted_request;
+  accepted_request.set_request_id(1);
+  artc::v1::WorkResponse accepted_response;
+  grpc::Status accepted_status;
+  std::thread first([&] {
+    auto channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+    auto stub = artc::v1::Traffic::NewStub(channel);
+    accepted_status = stub->Execute(&accepted_context, accepted_request,
+                                    &accepted_response);
+  });
+
+  if (!backend.wait_until_entered(2s)) {
+    backend.release();
+    first.join();
+    FAIL() << "first request did not reach the backend";
+    return;
+  }
+  grpc::ClientContext rejected_context;
+  rejected_context.set_deadline(std::chrono::system_clock::now() + 2s);
+  artc::v1::WorkRequest rejected_request;
+  rejected_request.set_request_id(2);
+  artc::v1::WorkResponse rejected_response;
+  auto channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  auto stub = artc::v1::Traffic::NewStub(channel);
+  const auto rejected_status = stub->Execute(&rejected_context, rejected_request,
+                                             &rejected_response);
+  backend.release();
+  first.join();
+
+  ASSERT_TRUE(accepted_status.ok()) << accepted_status.error_message();
+  EXPECT_EQ(accepted_response.backend_attempt_count(), 1U);
+  EXPECT_EQ(trailing_values(accepted_context, "artc-admission-result"),
+            (std::vector<std::string>{"ADMITTED"}));
+  EXPECT_EQ(trailing_values(accepted_context, "artc-backend-attempts"),
+            (std::vector<std::string>{"1"}));
+  const auto decision = trailing_values(accepted_context, "artc-decision");
+  ASSERT_EQ(decision.size(), 1U);
+  EXPECT_NE(decision.front().find("selected=0"), std::string::npos);
+  EXPECT_NE(decision.front().find("candidates=0:healthy"), std::string::npos);
+
+  EXPECT_EQ(rejected_status.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
+  EXPECT_EQ(trailing_values(rejected_context, "artc-admission-result"),
+            (std::vector<std::string>{"REJECT_CONCURRENCY_LIMIT"}));
+  EXPECT_EQ(trailing_values(rejected_context, "artc-backend-attempts"),
+            (std::vector<std::string>{"0"}));
 }
 
 }  // namespace

@@ -143,6 +143,7 @@ if(BUILD_TESTING)
   FetchContent_MakeAvailable(googletest)
   add_executable(artc_unit_tests
     tests/unit/selector_test.cc
+    tests/unit/phase2_test.cc
     tests/unit/arrival_schedule_test.cc
     tests/unit/histogram_test.cc
     tests/unit/protocol_test.cc)

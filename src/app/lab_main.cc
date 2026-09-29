@@ -1,6 +1,9 @@
 #include "artc/rpc/services.h"
 
 #include <charconv>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -28,6 +31,57 @@ double parse_double(std::string_view value) {
     throw std::invalid_argument("invalid floating-point argument");
   }
   return result;
+}
+
+template <typename T>
+T environment_integer(const char* name, T fallback) {
+  const char* value = std::getenv(name);
+  return value == nullptr ? fallback : parse_integer<T>(value);
+}
+
+double environment_double(const char* name, double fallback) {
+  const char* value = std::getenv(name);
+  return value == nullptr ? fallback : parse_double(value);
+}
+
+artc::control::ControllerConfig controller_config_from_environment(double smoothing) {
+  artc::control::ControllerConfig config;
+  config.latency_ewma_smoothing = smoothing;
+  config.aimd.min_limit = environment_integer<std::uint32_t>("ARTC_AIMD_MIN_LIMIT", 1);
+  config.aimd.max_limit = environment_integer<std::uint32_t>("ARTC_AIMD_MAX_LIMIT", 512);
+  config.aimd.initial_limit = environment_integer<std::uint32_t>("ARTC_AIMD_INITIAL_LIMIT", 64);
+  config.aimd.additive_increase = environment_integer<std::uint32_t>("ARTC_AIMD_ALPHA", 2);
+  config.aimd.multiplicative_decrease =
+      environment_double("ARTC_AIMD_BETA", 0.7);
+  config.aimd.control_interval = std::chrono::milliseconds(
+      environment_integer<std::int64_t>("ARTC_AIMD_INTERVAL_MS", 100));
+  config.aimd.minimum_window_samples =
+      environment_integer<std::uint64_t>("ARTC_AIMD_MIN_SAMPLES", 16);
+  config.aimd.target_latency = std::chrono::microseconds(
+      environment_integer<std::int64_t>("ARTC_AIMD_TARGET_LATENCY_US", 50'000));
+  config.aimd.overload_error_fraction =
+      environment_double("ARTC_AIMD_OVERLOAD_ERROR_FRACTION", 0.1);
+  config.deadline_safety_margin = std::chrono::microseconds(
+      environment_integer<std::int64_t>("ARTC_DEADLINE_MARGIN_US", 1'000));
+  config.default_deadline = std::chrono::milliseconds(
+      environment_integer<std::int64_t>("ARTC_DEFAULT_DEADLINE_MS", 5'000));
+  config.decision_sample_every =
+      environment_integer<std::uint32_t>("ARTC_DECISION_SAMPLE_EVERY", 0);
+  config.health.minimum_latency_samples =
+      environment_integer<std::uint64_t>("ARTC_HEALTH_MIN_SAMPLES", 4);
+  config.health.consecutive_failures_to_unavailable =
+      environment_integer<std::uint64_t>("ARTC_HEALTH_FAILURES", 3);
+  config.health.recovery_successes =
+      environment_integer<std::uint64_t>("ARTC_HEALTH_RECOVERY_SUCCESSES", 3);
+  config.health.recovery_cooldown = std::chrono::milliseconds(
+      environment_integer<std::int64_t>("ARTC_HEALTH_RECOVERY_COOLDOWN_MS", 500));
+  config.health.degraded_latency_ratio =
+      environment_double("ARTC_HEALTH_DEGRADED_RATIO", 2.0);
+  config.health.recovered_latency_ratio =
+      environment_double("ARTC_HEALTH_RECOVERED_RATIO", 1.5);
+  config.recovery_probe_period =
+      environment_integer<std::uint32_t>("ARTC_RECOVERY_PROBE_PERIOD", 16);
+  return config;
 }
 
 void print_usage() {
@@ -73,7 +127,8 @@ int main(int argc, char** argv) {
       }
       artc::rpc::RouterService service(
           std::move(replicas), artc::routing::parse_policy(argv[3]),
-          parse_integer<std::uint64_t>(argv[4]), parse_double(argv[5]));
+          parse_integer<std::uint64_t>(argv[4]), parse_double(argv[5]),
+          controller_config_from_environment(parse_double(argv[5])));
       auto server = artc::rpc::start_server(argv[2], service);
       return artc::rpc::wait_for_shutdown(*server);
     }

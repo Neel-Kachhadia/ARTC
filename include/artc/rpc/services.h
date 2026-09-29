@@ -1,5 +1,6 @@
 #pragma once
 
+#include "artc/control/phase2.h"
 #include "artc/routing/selector.h"
 #include "traffic.grpc.pb.h"
 
@@ -54,7 +55,9 @@ class RouterService final : public artc::v1::Traffic::CallbackService {
  public:
   struct State;
   RouterService(std::vector<ReplicaConfig> replicas, routing::Policy policy,
-                std::uint64_t seed, double ewma_smoothing);
+                std::uint64_t seed, double ewma_smoothing,
+                control::ControllerConfig controller_config = {});
+  ~RouterService() override;
   grpc::ServerUnaryReactor* Execute(grpc::CallbackServerContext* context,
                                     const artc::v1::WorkRequest* request,
                                     artc::v1::WorkResponse* response) override;

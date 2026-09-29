@@ -28,6 +28,145 @@ bool ReplicaState::observe_latency(double latency_us, double smoothing) {
   return true;
 }
 
+namespace {
+
+template <typename T>
+void increment_saturated(T* value) noexcept {
+  if (*value != std::numeric_limits<T>::max()) ++*value;
+}
+
+double window_p95(const std::array<double, ReplicaState::kLatencyWindowCapacity>& samples,
+                  std::size_t size) {
+  if (size == 0) return 0.0;
+  auto sorted = samples;
+  std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(size));
+  const auto rank = static_cast<std::size_t>(std::ceil(0.95 * static_cast<double>(size)));
+  return sorted[std::max<std::size_t>(1, rank) - 1];
+}
+
+}  // namespace
+
+bool ReplicaState::observe_completion(
+    std::chrono::steady_clock::time_point completed_at, double latency_us,
+    bool success, bool timeout, bool deadline_missed, bool cancelled,
+    double smoothing) {
+  constexpr double kMaximumLatencyUs = 60'000'000.0;
+  if (!std::isfinite(latency_us) || latency_us < 0.0 ||
+      !std::isfinite(smoothing) || smoothing <= 0.0 || smoothing > 1.0) {
+    return false;
+  }
+  latency_us = std::min(latency_us, kMaximumLatencyUs);
+  std::lock_guard lock(observation_mutex_);
+  increment_saturated(&completed_);
+  increment_saturated(&window_completed_);
+
+  if (success) {
+    if (latency_samples_ != std::numeric_limits<std::uint64_t>::max()) {
+      ++latency_samples_;
+    }
+    latency_window_[latency_window_next_] = latency_us;
+    latency_window_next_ = (latency_window_next_ + 1) % kLatencyWindowCapacity;
+    latency_window_size_ = std::min(latency_window_size_ + 1, kLatencyWindowCapacity);
+    control_latency_window_[control_latency_window_next_] = latency_us;
+    control_latency_window_next_ =
+        (control_latency_window_next_ + 1) % kLatencyWindowCapacity;
+    control_latency_window_size_ =
+        std::min(control_latency_window_size_ + 1, kLatencyWindowCapacity);
+
+    double sample = latency_us;
+    if (latency_samples_ > 1) {
+      const double cap = std::max(latency_ewma_us_ * 4.0,
+                                  latency_ewma_us_ + 100'000.0);
+      sample = std::min(sample, cap);
+      latency_ewma_us_ = smoothing * sample + (1.0 - smoothing) * latency_ewma_us_;
+    } else {
+      latency_ewma_us_ = sample;
+    }
+  }
+
+  if (!cancelled) {
+    increment_saturated(&window_control_samples_);
+    if (success) {
+      increment_saturated(&succeeded_);
+      increment_saturated(&window_succeeded_);
+      last_success_ = completed_at;
+      has_success_ = true;
+      consecutive_failures_ = 0;
+      if (!deadline_missed) increment_saturated(&window_useful_successes_);
+    }
+    if (!success || deadline_missed) {
+      increment_saturated(&failed_);
+      increment_saturated(&window_failed_);
+      error_ewma_ = smoothing + (1.0 - smoothing) * error_ewma_;
+    } else {
+      error_ewma_ *= (1.0 - smoothing);
+    }
+    if (!success) {
+      increment_saturated(&consecutive_failures_);
+      last_failure_ = completed_at;
+      has_failure_ = true;
+    }
+    if (timeout) {
+      increment_saturated(&timed_out_);
+      increment_saturated(&window_timed_out_);
+    }
+    if (deadline_missed) increment_saturated(&window_deadline_missed_);
+  }
+  return std::isfinite(latency_ewma_us_) && std::isfinite(error_ewma_);
+}
+
+void ReplicaState::record_routed() noexcept {
+  std::lock_guard lock(observation_mutex_);
+  increment_saturated(&routed_);
+}
+
+ReplicaStats ReplicaState::stats() const {
+  std::lock_guard lock(observation_mutex_);
+  return ReplicaStats{.latency_ewma_us = latency_ewma_us_,
+                      .error_ewma = error_ewma_,
+                      .latency_p95_us = window_p95(latency_window_, latency_window_size_),
+                      .latency_samples = latency_samples_,
+                      .completed = completed_,
+                      .succeeded = succeeded_,
+                      .failed = failed_,
+                      .timed_out = timed_out_,
+                      .routed = routed_,
+                      .consecutive_failures = consecutive_failures_,
+                      .last_success = last_success_,
+                      .last_failure = last_failure_,
+                      .has_success = has_success_,
+                      .has_failure = has_failure_,
+                      .health = health_};
+}
+
+ReplicaWindow ReplicaState::take_window() {
+  std::lock_guard lock(observation_mutex_);
+  ReplicaWindow result{.completed = window_completed_,
+                       .control_samples = window_control_samples_,
+                       .succeeded = window_succeeded_,
+                       .useful_successes = window_useful_successes_,
+                       .failed = window_failed_,
+                       .timed_out = window_timed_out_,
+                       .deadline_missed = window_deadline_missed_,
+                       .latency_p95_us = window_p95(control_latency_window_,
+                                                    control_latency_window_size_)};
+  window_completed_ = 0;
+  window_control_samples_ = 0;
+  window_succeeded_ = 0;
+  window_useful_successes_ = 0;
+  window_failed_ = 0;
+  window_timed_out_ = 0;
+  window_deadline_missed_ = 0;
+  control_latency_window_size_ = 0;
+  control_latency_window_next_ = 0;
+  return result;
+}
+
+void ReplicaState::set_health(HealthState health) noexcept {
+  std::lock_guard lock(observation_mutex_);
+  health_ = health;
+}
+
 ReplicaLease::ReplicaLease(std::shared_ptr<ReplicaState> replica)
     : replica_(std::move(replica)) {
   if (!replica_) throw std::invalid_argument("replica lease requires a replica");
@@ -208,6 +347,10 @@ Policy parse_policy(std::string_view value) {
   if (value == "least_inflight") return Policy::kLeastInflight;
   if (value == "ewma_latency") return Policy::kEwmaLatency;
   if (value == "p2c_latency_inflight") return Policy::kP2CLatencyInflight;
+  if (value == "artc_selector_only") return Policy::kArtcSelectorOnly;
+  if (value == "adaptive_concurrency_only") return Policy::kAdaptiveConcurrencyOnly;
+  if (value == "artc_adaptive_no_deadline") return Policy::kArtcAdaptiveNoDeadline;
+  if (value == "artc_adaptive") return Policy::kArtcAdaptive;
   throw std::invalid_argument("unknown routing policy");
 }
 
@@ -222,6 +365,11 @@ std::unique_ptr<Selector> make_selector(Policy policy, std::uint64_t seed,
       return std::make_unique<EwmaLatencySelector>(smoothing);
     case Policy::kP2CLatencyInflight:
       return std::make_unique<P2CLatencyInflightSelector>(seed, smoothing);
+    case Policy::kArtcSelectorOnly:
+    case Policy::kAdaptiveConcurrencyOnly:
+    case Policy::kArtcAdaptiveNoDeadline:
+    case Policy::kArtcAdaptive:
+      return std::make_unique<RoundRobinSelector>();
   }
   throw std::invalid_argument("invalid routing policy");
 }

@@ -104,6 +104,7 @@ target_include_directories(artc_proto PUBLIC "${ARTC_GENERATED_DIR}")
 target_link_libraries(artc_proto PUBLIC protobuf::libprotobuf grpc++)
 
 add_library(artc_core STATIC
+  src/control/phase2.cc
   src/routing/selector.cc
   src/bench/arrival_schedule.cc
   src/bench/histogram.cc)

@@ -3,6 +3,7 @@
 #include "artc/rpc/services.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -17,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -38,6 +40,7 @@ struct Options {
   std::string worktree_dirty{"unknown"};
   std::string compose_project{"local"};
   std::string routing_policy{"unknown"};
+  std::map<std::string, std::string> controller_parameters;
   std::filesystem::path output;
   artc::bench::ArrivalMode mode{artc::bench::ArrivalMode::kConstant};
   std::string mode_name{"constant"};
@@ -51,6 +54,7 @@ struct Options {
   std::uint32_t payload_bytes{0};
   std::chrono::milliseconds deadline{5s};
   bool invoke_dependency{false};
+  bool allow_errors{false};
   bool health{false};
   bool validate_only{false};
 };
@@ -81,13 +85,38 @@ Options parse_options(int argc, char** argv) {
   if (const char* value = std::getenv("ARTC_WORKTREE_DIRTY")) options.worktree_dirty = value;
   if (const char* value = std::getenv("ARTC_COMPOSE_PROJECT")) options.compose_project = value;
   if (const char* value = std::getenv("ARTC_ROUTING_POLICY")) options.routing_policy = value;
+  constexpr std::array parameters{
+      std::pair{"ARTC_SERVICE_B_DELAY_US", "0"},
+      std::pair{"ARTC_AIMD_MIN_LIMIT", "1"},
+      std::pair{"ARTC_AIMD_MAX_LIMIT", "512"},
+      std::pair{"ARTC_AIMD_INITIAL_LIMIT", "64"},
+      std::pair{"ARTC_AIMD_ALPHA", "2"},
+      std::pair{"ARTC_AIMD_BETA", "0.7"},
+      std::pair{"ARTC_AIMD_INTERVAL_MS", "100"},
+      std::pair{"ARTC_AIMD_MIN_SAMPLES", "16"},
+      std::pair{"ARTC_AIMD_TARGET_LATENCY_US", "50000"},
+      std::pair{"ARTC_AIMD_OVERLOAD_ERROR_FRACTION", "0.1"},
+      std::pair{"ARTC_DEADLINE_MARGIN_US", "1000"},
+      std::pair{"ARTC_DEFAULT_DEADLINE_MS", "5000"},
+      std::pair{"ARTC_DECISION_SAMPLE_EVERY", "0"},
+      std::pair{"ARTC_HEALTH_MIN_SAMPLES", "4"},
+      std::pair{"ARTC_HEALTH_FAILURES", "3"},
+      std::pair{"ARTC_HEALTH_RECOVERY_SUCCESSES", "3"},
+      std::pair{"ARTC_HEALTH_RECOVERY_COOLDOWN_MS", "500"},
+      std::pair{"ARTC_HEALTH_DEGRADED_RATIO", "2.0"},
+      std::pair{"ARTC_HEALTH_RECOVERED_RATIO", "1.5"},
+      std::pair{"ARTC_RECOVERY_PROBE_PERIOD", "16"}};
+  for (const auto& [name, fallback] : parameters) {
+    const char* value = std::getenv(name);
+    options.controller_parameters.emplace(name, value == nullptr ? fallback : value);
+  }
   for (int index = 1; index < argc; ++index) {
     const std::string_view key(argv[index]);
     if (key == "--help") {
       std::cout << "artc_loadgen --target HOST:PORT --output DIR [--mode constant|poisson|step|ramp|burst|scripted] "
                    "[--rate-rps N] [--initial-rate-rps N] [--duration-ms N] [--seed N] "
                    "[--max-inflight N] [--max-issue-lag-us N] [--deadline-ms N] "
-                   "[--work-units N] [--payload-bytes N] [--invoke-dependency]\n"
+                   "[--work-units N] [--payload-bytes N] [--invoke-dependency] [--allow-errors]\n"
                    "artc_loadgen --health --target HOST:PORT\n"
                    "artc_loadgen --validate-schedule [workload options]\n";
       std::exit(0);
@@ -102,6 +131,10 @@ Options parse_options(int argc, char** argv) {
     }
     if (key == "--invoke-dependency") {
       options.invoke_dependency = true;
+      continue;
+    }
+    if (key == "--allow-errors") {
+      options.allow_errors = true;
       continue;
     }
     if (index + 1 >= argc) throw std::invalid_argument("missing option value");
@@ -204,16 +237,51 @@ void write_summary(std::ostream& output, const artc::bench::HistogramSummary& su
   output << '}';
 }
 
+void write_counts(std::ostream& output, const std::map<std::string, std::uint64_t>& counts) {
+  output << '{';
+  bool first = true;
+  for (const auto& [name, count] : counts) {
+    if (!first) output << ',';
+    first = false;
+    output << json_string(name) << ':' << count;
+  }
+  output << '}';
+}
+
+void write_strings(std::ostream& output, const std::map<std::string, std::string>& values) {
+  output << '{';
+  bool first = true;
+  for (const auto& [name, value] : values) {
+    if (!first) output << ',';
+    first = false;
+    output << json_string(name) << ':' << json_string(value);
+  }
+  output << '}';
+}
+
+void write_csv_field(std::ostream& output, std::string_view value) {
+  output << '"';
+  for (const char character : value) {
+    if (character == '"') output << '"';
+    output << character;
+  }
+  output << '"';
+}
+
 class ClientCall;
 
 struct RunState {
-  explicit RunState(std::chrono::milliseconds call_deadline)
-      : deadline(call_deadline) {}
+  explicit RunState(std::chrono::milliseconds call_deadline,
+                    Clock::time_point run_start)
+      : deadline(call_deadline), started(run_start) {}
 
   void complete(ClientCall* call, const grpc::Status& status,
-                const artc::v1::WorkResponse& response, Clock::time_point scheduled);
+                const artc::v1::WorkResponse& response, Clock::time_point scheduled,
+                Clock::time_point issued_at,
+                const std::multimap<grpc::string_ref, grpc::string_ref>& metadata);
 
   const std::chrono::milliseconds deadline;
+  const Clock::time_point started;
   // ponytail: one per-run lock keeps callback accounting bounded; shard only if issue lag shows contention.
   std::mutex mutex;
   std::condition_variable changed;
@@ -221,12 +289,20 @@ struct RunState {
   artc::bench::Histogram latency;
   artc::bench::Histogram issue_lag;
   std::map<std::string, std::uint64_t> by_replica;
+  std::map<std::string, std::uint64_t> admission_results;
+  std::map<std::string, std::uint64_t> statuses;
+  std::vector<std::pair<std::uint64_t, std::string>> decision_samples;
   std::uint64_t issued{0};
   std::uint64_t completed{0};
   std::uint64_t succeeded{0};
   std::uint64_t deadline_goodput{0};
   std::uint64_t errors{0};
+  std::uint64_t rejected{0};
+  std::uint64_t deadline_misses{0};
   std::uint64_t backend_attempts{0};
+  std::uint64_t attempt_metadata_observed{0};
+  std::uint64_t invariant_violations{0};
+  std::uint64_t decision_samples_dropped{0};
   std::uint64_t max_issue_lag_us{0};
   bool histogram_error{false};
 };
@@ -235,7 +311,7 @@ class ClientCall final : public grpc::ClientUnaryReactor {
  public:
   ClientCall(std::shared_ptr<RunState> state, Clock::time_point scheduled,
              const Options& options, std::uint64_t request_id)
-      : state_(std::move(state)), scheduled_(scheduled) {
+      : state_(std::move(state)), scheduled_(scheduled), issued_at_(Clock::now()) {
     request_.set_request_id(request_id);
     request_.set_work_units(options.work_units);
     request_.set_payload_bytes(options.payload_bytes);
@@ -249,7 +325,8 @@ class ClientCall final : public grpc::ClientUnaryReactor {
   }
 
   void OnDone(const grpc::Status& status) override {
-    state_->complete(this, status, response_, scheduled_);
+    state_->complete(this, status, response_, scheduled_, issued_at_,
+                     context_.GetServerTrailingMetadata());
     delete this;
   }
 
@@ -257,6 +334,7 @@ class ClientCall final : public grpc::ClientUnaryReactor {
   friend struct RunState;
   std::shared_ptr<RunState> state_;
   Clock::time_point scheduled_;
+  Clock::time_point issued_at_;
   grpc::ClientContext context_;
   artc::v1::WorkRequest request_;
   artc::v1::WorkResponse response_;
@@ -264,20 +342,80 @@ class ClientCall final : public grpc::ClientUnaryReactor {
 
 void RunState::complete(ClientCall* call, const grpc::Status& status,
                         const artc::v1::WorkResponse& response,
-                        Clock::time_point scheduled) {
+                        Clock::time_point scheduled, Clock::time_point issued_at,
+                        const std::multimap<grpc::string_ref, grpc::string_ref>& metadata) {
   const auto finished = Clock::now();
   const auto elapsed = finished - scheduled;
+  const auto rpc_elapsed = finished - issued_at;
   const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed);
   std::lock_guard lock(mutex);
   if (!latency.record(elapsed_ns)) histogram_error = true;
   ++completed;
+  ++statuses[std::to_string(static_cast<int>(status.error_code()))];
+  std::string admission;
+  std::string selected_replica;
+  std::string decision;
+  std::optional<std::uint64_t> attempts;
+  for (const auto& [key_ref, value_ref] : metadata) {
+    const std::string_view key(key_ref.data(), key_ref.size());
+    const std::string value(value_ref.data(), value_ref.size());
+    if (key == "artc-admission-result") {
+      if (!admission.empty()) ++invariant_violations;
+      admission = value;
+    } else if (key == "artc-backend-attempts") {
+      if (attempts) {
+        ++invariant_violations;
+      } else {
+        std::uint64_t parsed = 0;
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (error == std::errc{} && end == value.data() + value.size()) attempts = parsed;
+        else ++invariant_violations;
+      }
+    } else if (key == "artc-selected-replica") {
+      selected_replica = value;
+    } else if (key == "artc-decision") {
+      decision = value;
+    }
+  }
+  if (!admission.empty()) {
+    ++admission_results[admission];
+    if (admission == "ADMITTED") {
+      if (attempts && *attempts > 1) ++invariant_violations;
+    } else if (admission.starts_with("REJECT_")) {
+      ++rejected;
+      if (attempts && *attempts != 0) ++invariant_violations;
+    }
+    if (!attempts) ++invariant_violations;
+  }
+  if (attempts) {
+    ++attempt_metadata_observed;
+    backend_attempts += *attempts;
+    if (*attempts != 0 && !selected_replica.empty()) ++by_replica[selected_replica];
+  } else if (status.ok()) {
+    backend_attempts += response.backend_attempt_count();
+    if (!response.replica_id().empty()) ++by_replica[response.replica_id()];
+  }
+  if (!decision.empty()) {
+    constexpr std::size_t kMaximumDecisionSamples = 10'000;
+    if (decision_samples.size() < kMaximumDecisionSamples) {
+      const auto elapsed_us = static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(issued_at - started).count());
+      decision_samples.emplace_back(elapsed_us, std::move(decision));
+    } else {
+      ++decision_samples_dropped;
+    }
+  }
+  const bool rejected_before_dispatch = admission.starts_with("REJECT_");
+  if (rpc_elapsed > deadline ||
+      (status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED &&
+       !rejected_before_dispatch)) {
+    ++deadline_misses;
+  }
   if (status.ok()) {
     ++succeeded;
-    backend_attempts += response.backend_attempt_count();
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed) <= deadline) {
+    if (rpc_elapsed <= deadline) {
       ++deadline_goodput;
     }
-    if (!response.replica_id().empty()) ++by_replica[response.replica_id()];
   } else {
     ++errors;
   }
@@ -295,15 +433,36 @@ void write_artifacts(const Options& options, const std::vector<std::chrono::nano
   std::filesystem::create_directories(options.output);
   state.latency.write_raw(options.output / "latency.hdr.csv");
   state.issue_lag.write_raw(options.output / "issue-lag.hdr.csv");
+  {
+    std::ofstream samples(options.output / "decision-samples.csv", std::ios::out | std::ios::trunc);
+    if (!samples) throw std::runtime_error("cannot create decision sample artifact");
+    samples << "elapsed_us,decision\n";
+    for (const auto& [elapsed_us, decision] : state.decision_samples) {
+      samples << elapsed_us << ',';
+      write_csv_field(samples, decision);
+      samples << '\n';
+    }
+    samples.flush();
+    if (!samples) throw std::runtime_error("failed to write decision sample artifact");
+  }
 
   const auto latency = state.latency.summary();
   const auto issue_lag = state.issue_lag.summary();
   const bool saturated = state.max_issue_lag_us > options.max_issue_lag_us;
-  const bool valid = !saturated && !state.histogram_error &&
-                     state.issued == arrivals.size() && state.completed == state.issued &&
-                     state.errors == 0;
+  const bool measurement_valid = !saturated && !state.histogram_error &&
+                                 state.invariant_violations == 0 &&
+                                 state.issued == arrivals.size() &&
+                                 state.completed == state.issued &&
+                                 state.backend_attempts <= state.issued;
+  const bool valid = measurement_valid && (options.allow_errors || state.errors == 0);
   const double offered_rps = static_cast<double>(arrivals.size()) /
                              std::chrono::duration<double>(options.duration).count();
+  const double duration_seconds = std::chrono::duration<double>(options.duration).count();
+  const auto count_rps = [duration_seconds](std::uint64_t count) {
+    return static_cast<double>(count) / duration_seconds;
+  };
+  const auto admitted = state.admission_results.find("ADMITTED");
+  const auto admitted_count = admitted == state.admission_results.end() ? 0 : admitted->second;
   const double amplification = state.issued == 0
                                    ? 0.0
                                    : static_cast<double>(state.backend_attempts) /
@@ -334,13 +493,26 @@ void write_artifacts(const Options& options, const std::vector<std::chrono::nano
            << ",\n\"issued\":" << state.issued
            << ",\n\"completed\":" << state.completed
            << ",\n\"successful\":" << state.succeeded
+           << ",\n\"admitted\":" << admitted_count
+           << ",\n\"rejected\":" << state.rejected
+           << ",\n\"admitted_rps\":" << count_rps(admitted_count)
+           << ",\n\"rejected_rps\":" << count_rps(state.rejected)
+           << ",\n\"completed_rps\":" << count_rps(state.completed)
            << ",\n\"deadline_goodput\":" << state.deadline_goodput
+           << ",\n\"deadline_goodput_rps\":" << count_rps(state.deadline_goodput)
+           << ",\n\"deadline_misses\":" << state.deadline_misses
            << ",\n\"errors\":" << state.errors
            << ",\n\"backend_attempts\":" << state.backend_attempts
+           << ",\n\"attempt_metadata_observed\":" << state.attempt_metadata_observed
            << ",\n\"attempt_amplification\":" << amplification
+           << ",\n\"invariant_violations\":" << state.invariant_violations
+           << ",\n\"decision_samples\":" << state.decision_samples.size()
+           << ",\n\"decision_samples_dropped\":" << state.decision_samples_dropped
            << ",\n\"max_issue_lag_us\":" << state.max_issue_lag_us
            << ",\n\"max_issue_lag_limit_us\":" << options.max_issue_lag_us
            << ",\n\"generator_saturated\":" << (saturated ? "true" : "false")
+           << ",\n\"measurement_valid\":" << (measurement_valid ? "true" : "false")
+           << ",\n\"allow_errors\":" << (options.allow_errors ? "true" : "false")
            << ",\n\"valid\":" << (valid ? "true" : "false")
            << ",\n\"process_cpu_seconds\":" << process_cpu_seconds
            << ",\n\"process_cpu_percent\":" << cpu_percent
@@ -349,6 +521,12 @@ void write_artifacts(const Options& options, const std::vector<std::chrono::nano
   write_summary(manifest, latency);
   manifest << ",\n\"issue_lag_us\":";
   write_summary(manifest, issue_lag);
+  manifest << ",\n\"admission_results\":";
+  write_counts(manifest, state.admission_results);
+  manifest << ",\n\"status_code_counts\":";
+  write_counts(manifest, state.statuses);
+  manifest << ",\n\"controller_parameters\":";
+  write_strings(manifest, options.controller_parameters);
   manifest << ",\n\"responses_by_replica\":{";
   bool first = true;
   for (const auto& [replica, count] : state.by_replica) {
@@ -387,8 +565,8 @@ int run(const Options& options) {
 
   auto channel = grpc::CreateChannel(options.target, grpc::InsecureChannelCredentials());
   auto stub = artc::v1::Traffic::NewStub(channel);
-  auto state = std::make_shared<RunState>(options.deadline);
   const auto started = Clock::now();
+  auto state = std::make_shared<RunState>(options.deadline, started);
   const auto started_unix_ms = static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::system_clock::now().time_since_epoch())
@@ -429,8 +607,10 @@ int run(const Options& options) {
   write_artifacts(options, arrivals, started_unix_ms, elapsed_wall_ms, cpu_seconds, *state);
   const bool saturated = state->max_issue_lag_us > options.max_issue_lag_us;
   const bool valid = !saturated && !state->histogram_error &&
+                     state->invariant_violations == 0 &&
                      state->issued == arrivals.size() && state->completed == state->issued &&
-                     state->errors == 0;
+                     state->backend_attempts <= state->issued &&
+                     (options.allow_errors || state->errors == 0);
   return valid ? 0 : 2;
 }
 

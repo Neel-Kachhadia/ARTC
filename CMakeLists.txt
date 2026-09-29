@@ -133,6 +133,12 @@ target_compile_options(artc_loadgen PRIVATE
   -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
   -Werror=return-type)
 
+add_executable(artc_control_bench src/bench/control_bench_main.cc)
+target_link_libraries(artc_control_bench PRIVATE artc_core)
+target_compile_options(artc_control_bench PRIVATE
+  -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+  -Werror=return-type)
+
 if(BUILD_TESTING)
   FetchContent_Declare(
     googletest

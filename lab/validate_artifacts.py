@@ -14,7 +14,9 @@ def raw_count(path: Path) -> int:
         return sum(int(row["count"]) for row in reader)
 
 
-def load_run(path: Path, expect_saturated: bool = False) -> dict:
+def load_run(path: Path, expect_saturated: bool = False,
+             allow_errors: bool = False,
+             allow_uninstrumented: bool = False) -> dict:
     manifest_path = path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema") != "artc-run-v1":
@@ -39,6 +41,24 @@ def load_run(path: Path, expect_saturated: bool = False) -> dict:
             raise ValueError(f"{path}: saturation threshold was not exceeded")
     elif manifest.get("valid") is not True or manifest.get("generator_saturated") is not False:
         raise ValueError(f"{path}: run is invalid or generator-saturated")
+    if manifest.get("invariant_violations", 0) != 0:
+        raise ValueError(f"{path}: request path invariant violation was observed")
+    attempts = manifest.get("backend_attempts")
+    issued = manifest.get("issued")
+    if attempts is not None and issued and attempts / issued > 1.0000001:
+        raise ValueError(f"{path}: backend attempt amplification exceeds one")
+    if not expect_saturated and not allow_uninstrumented:
+        if manifest.get("attempt_metadata_observed") is not None and \
+                manifest["attempt_metadata_observed"] != issued:
+            raise ValueError(f"{path}: one or more calls lack backend-attempt metadata")
+        if manifest.get("admitted") is not None and manifest.get("rejected") is not None and \
+                manifest["admitted"] + manifest["rejected"] != issued:
+            raise ValueError(f"{path}: admission accounting does not cover every issued request")
+    if allow_errors:
+        if manifest.get("measurement_valid", manifest.get("valid")) is not True:
+            raise ValueError(f"{path}: measurement integrity failed")
+    elif manifest.get("errors", 0) != 0:
+        raise ValueError(f"{path}: RPC errors were observed")
     return manifest
 
 
@@ -64,6 +84,10 @@ def compare(paths: list[Path], min_increase_us: int, max_recovery_delta_us: int)
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--expect-saturated", action="store_true")
+    parser.add_argument("--allow-errors", action="store_true",
+                        help="allow measured RPC failures/rejections as experiment outcomes")
+    parser.add_argument("--allow-uninstrumented", action="store_true",
+                        help="allow a direct backend target without router admission metadata")
     parser.add_argument("--compare", action="store_true")
     parser.add_argument("--min-p99-increase-us", type=int, default=50_000)
     parser.add_argument("--max-recovery-delta-us", type=int, default=20_000)
@@ -78,8 +102,13 @@ def main() -> int:
         else:
             if len(paths) != 1:
                 raise ValueError("artifact validation requires one run path")
-            manifest = load_run(paths[0], args.expect_saturated)
+            manifest = load_run(paths[0], args.expect_saturated, args.allow_errors,
+                                args.allow_uninstrumented)
             print(f"artifact_valid=true run={paths[0]} samples={manifest['completed']} "
+                  f"admitted={manifest.get('admitted', 'n/a')} "
+                  f"rejected={manifest.get('rejected', 'n/a')} "
+                  f"deadline_goodput={manifest.get('deadline_goodput', 'n/a')} "
+                  f"attempt_amplification={manifest.get('attempt_amplification', 'n/a')} "
                   f"generator_saturated={manifest['generator_saturated']}")
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         parser.exit(1, f"artifact validation failed: {error}\n")

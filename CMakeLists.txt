@@ -159,11 +159,21 @@ if(BUILD_TESTING)
     -Werror=return-type)
   include(GoogleTest)
   gtest_discover_tests(artc_unit_tests DISCOVERY_MODE PRE_TEST)
+  add_executable(artc_attempt_policy_tests tests/unit/attempt_policy_test.cc)
+  target_include_directories(artc_attempt_policy_tests PRIVATE include)
+  target_link_libraries(artc_attempt_policy_tests PRIVATE artc_proto GTest::gtest_main)
+  target_compile_options(artc_attempt_policy_tests PRIVATE
+    -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+    -Werror=return-type)
+  gtest_discover_tests(artc_attempt_policy_tests
+    DISCOVERY_MODE PRE_TEST TEST_PREFIX AttemptPolicyOnly.)
   add_test(NAME Loadgen.ConstantScheduleValidation
     COMMAND artc_loadgen --validate-schedule --mode constant
             --duration-ms 1000 --rate-rps 100)
 
-  add_executable(artc_integration_tests tests/integration/rpc_services_test.cc)
+  add_executable(artc_integration_tests
+    tests/integration/rpc_services_test.cc
+    tests/integration/attempt_management_test.cc)
   target_link_libraries(artc_integration_tests PRIVATE artc_rpc GTest::gtest_main)
   target_compile_options(artc_integration_tests PRIVATE
     -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion

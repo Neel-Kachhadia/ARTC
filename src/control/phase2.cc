@@ -57,6 +57,18 @@ std::size_t admission_index(AdmissionResult result) noexcept {
   return static_cast<std::size_t>(result);
 }
 
+double selector_latency_estimate(const ReplicaSnapshot& replica,
+                                 double cold_start_us,
+                                 std::uint64_t minimum_samples) noexcept {
+  const double completed = replica.latency_samples == 0
+                               ? cold_start_us
+                               : std::max(replica.latency_ewma_us, 1.0);
+  const double censored = replica.censored_latency_samples >= minimum_samples
+                              ? replica.censored_latency_p95_lower_bound_us
+                              : 0.0;
+  return std::max(completed, censored);
+}
+
 }  // namespace
 
 const char* admission_result_name(AdmissionResult result) noexcept {
@@ -255,6 +267,8 @@ FeasibilityResult evaluate_deadline_feasibility(
   double second_fastest_us = std::numeric_limits<double>::infinity();
   for (const auto& replica : snapshot.replicas) {
     if (replica.health == routing::HealthState::kUnavailable) continue;
+    // Censored hedge losers are biased lower bounds, not service percentiles;
+    // keep Phase 2 deadline feasibility based on completed-attempt evidence.
     const double estimate = replica.latency_p95_us > 0.0
                                 ? replica.latency_p95_us
                                 : replica.latency_ewma_us;
@@ -309,9 +323,8 @@ CandidateScore AdaptiveSelector::score(
   result.replica_id = replicas[index]->id;
   result.health = view.health;
   result.inflight = replicas[index]->inflight.load(std::memory_order_relaxed);
-  const double latency = view.latency_samples == 0
-                             ? config_.cold_start_latency_us
-                             : std::max(view.latency_ewma_us, 1.0);
+  const double latency = selector_latency_estimate(
+      view, config_.cold_start_latency_us, config_.health.minimum_latency_samples);
   result.latency_component = std::clamp(latency / std::max(best_latency, 1.0), 1.0, 16.0);
   result.load_component = 1.0 + std::min(
       static_cast<double>(result.inflight) /
@@ -335,27 +348,39 @@ CandidateScore AdaptiveSelector::score(
 SelectionResult AdaptiveSelector::select(
     const ControllerSnapshot& snapshot,
     std::span<const std::shared_ptr<routing::ReplicaState>> replicas,
-    std::uint64_t request_id) noexcept {
+    std::uint64_t request_id,
+    std::optional<std::size_t> excluded_index) noexcept {
   SelectionResult result;
   if (replicas.empty() || replicas.size() != snapshot.replicas.size()) return result;
+  if (excluded_index && *excluded_index >= replicas.size()) return result;
+  const auto excluded = [excluded_index](std::size_t index) noexcept {
+    return excluded_index && *excluded_index == index;
+  };
   double best_latency = std::numeric_limits<double>::infinity();
   std::size_t cold_count = 0;
   std::size_t healthy_count = 0;
   std::size_t degraded_count = 0;
   std::size_t recovering_count = 0;
   for (std::size_t i = 0; i < replicas.size(); ++i) {
-    if (!replicas[i] || snapshot.replicas[i].health == routing::HealthState::kUnavailable) continue;
+    if (excluded(i) || !replicas[i] ||
+        snapshot.replicas[i].health == routing::HealthState::kUnavailable) continue;
     ++result.eligible;
-    if (snapshot.replicas[i].health == routing::HealthState::kHealthy) ++healthy_count;
-    if (snapshot.replicas[i].health == routing::HealthState::kDegraded) ++degraded_count;
-    if (snapshot.replicas[i].health != routing::HealthState::kRecovering &&
-        snapshot.replicas[i].latency_samples < config_.health.minimum_latency_samples) {
-      ++cold_count;
-    } else if (std::isfinite(snapshot.replicas[i].latency_ewma_us) &&
-               snapshot.replicas[i].latency_ewma_us > 0.0) {
-      best_latency = std::min(best_latency, snapshot.replicas[i].latency_ewma_us);
+    const auto health = snapshot.replicas[i].health;
+    if (health == routing::HealthState::kRecovering) {
+      ++recovering_count;
+      continue;
     }
-    if (snapshot.replicas[i].health == routing::HealthState::kRecovering) ++recovering_count;
+    if (health == routing::HealthState::kHealthy) ++healthy_count;
+    if (health == routing::HealthState::kDegraded) ++degraded_count;
+    if (snapshot.replicas[i].latency_samples < config_.health.minimum_latency_samples &&
+        snapshot.replicas[i].censored_latency_samples <
+            config_.health.minimum_latency_samples) {
+      ++cold_count;
+    } else {
+      best_latency = std::min(best_latency, selector_latency_estimate(
+          snapshot.replicas[i], config_.cold_start_latency_us,
+          config_.health.minimum_latency_samples));
+    }
   }
   if (result.eligible == 0) return result;
   if (!std::isfinite(best_latency)) best_latency = config_.cold_start_latency_us;
@@ -367,7 +392,7 @@ SelectionResult AdaptiveSelector::select(
       auto desired = static_cast<std::size_t>(
           (sequence / config_.recovery_probe_period) % count);
       for (std::size_t i = 0; i < replicas.size(); ++i) {
-        if (!replicas[i] || snapshot.replicas[i].health != health) continue;
+        if (excluded(i) || !replicas[i] || snapshot.replicas[i].health != health) continue;
         if (desired-- == 0) {
           result.selected = i;
           result.selected_score = score(snapshot, replicas, i, best_latency);
@@ -388,10 +413,12 @@ SelectionResult AdaptiveSelector::select(
     const auto start = static_cast<std::size_t>(request_id % replicas.size());
     for (std::size_t offset = 0; offset < replicas.size(); ++offset) {
       const auto index = (start + offset) % replicas.size();
-      if (replicas[index] &&
+      if (!excluded(index) && replicas[index] &&
           snapshot.replicas[index].health != routing::HealthState::kRecovering &&
           snapshot.replicas[index].health != routing::HealthState::kUnavailable &&
-          snapshot.replicas[index].latency_samples < config_.health.minimum_latency_samples) {
+          snapshot.replicas[index].latency_samples < config_.health.minimum_latency_samples &&
+          snapshot.replicas[index].censored_latency_samples <
+              config_.health.minimum_latency_samples) {
         result.selected = index;
         result.selected_score = score(snapshot, replicas, index, best_latency);
         return result;
@@ -401,7 +428,49 @@ SelectionResult AdaptiveSelector::select(
 
   double best_score = std::numeric_limits<double>::infinity();
   for (std::size_t i = 0; i < replicas.size(); ++i) {
-    if (!replicas[i] || snapshot.replicas[i].health == routing::HealthState::kUnavailable) continue;
+    if (excluded(i) || !replicas[i] ||
+        snapshot.replicas[i].health == routing::HealthState::kUnavailable ||
+        snapshot.replicas[i].health == routing::HealthState::kRecovering) continue;
+    const auto candidate = score(snapshot, replicas, i, best_latency);
+    if (candidate.total < best_score) {
+      best_score = candidate.total;
+      result.selected = i;
+      result.selected_score = candidate;
+    }
+  }
+  return result;
+}
+
+SelectionResult AdaptiveSelector::select_secondary(
+    const ControllerSnapshot& snapshot,
+    std::span<const std::shared_ptr<routing::ReplicaState>> replicas,
+    std::span<const std::size_t> excluded_indices) const noexcept {
+  SelectionResult result;
+  if (replicas.empty() || replicas.size() != snapshot.replicas.size()) return result;
+  const auto excluded = [excluded_indices](std::size_t index) noexcept {
+    return std::find(excluded_indices.begin(), excluded_indices.end(), index) !=
+           excluded_indices.end();
+  };
+  double best_latency = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < replicas.size(); ++i) {
+    if (!replicas[i] || excluded(i) ||
+        snapshot.replicas[i].health != routing::HealthState::kHealthy) continue;
+    ++result.eligible;
+    if (snapshot.replicas[i].latency_samples >= config_.health.minimum_latency_samples ||
+        snapshot.replicas[i].censored_latency_samples >=
+            config_.health.minimum_latency_samples) {
+      best_latency = std::min(best_latency, selector_latency_estimate(
+          snapshot.replicas[i], config_.cold_start_latency_us,
+          config_.health.minimum_latency_samples));
+    }
+  }
+  if (result.eligible == 0) return result;
+  if (!std::isfinite(best_latency)) best_latency = config_.cold_start_latency_us;
+
+  double best_score = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < replicas.size(); ++i) {
+    if (!replicas[i] || excluded(i) ||
+        snapshot.replicas[i].health != routing::HealthState::kHealthy) continue;
     const auto candidate = score(snapshot, replicas, i, best_latency);
     if (candidate.total < best_score) {
       best_score = candidate.total;
@@ -420,9 +489,11 @@ std::vector<CandidateScore> AdaptiveSelector::explain(
   double best_latency = std::numeric_limits<double>::infinity();
   for (const auto& replica : snapshot.replicas) {
     if (replica.health != routing::HealthState::kUnavailable &&
-        replica.latency_samples >= config_.health.minimum_latency_samples &&
-        std::isfinite(replica.latency_ewma_us) && replica.latency_ewma_us > 0.0) {
-      best_latency = std::min(best_latency, replica.latency_ewma_us);
+        (replica.latency_samples >= config_.health.minimum_latency_samples ||
+         replica.censored_latency_samples >= config_.health.minimum_latency_samples)) {
+      best_latency = std::min(best_latency, selector_latency_estimate(
+          replica, config_.cold_start_latency_us,
+          config_.health.minimum_latency_samples));
     }
   }
   if (!std::isfinite(best_latency)) best_latency = config_.cold_start_latency_us;
@@ -483,6 +554,17 @@ bool Phase2Controller::record_completion(std::size_t replica_index,
                                          SteadyTime completed_at,
                                          double latency_us,
                                          RequestOutcome outcome) noexcept {
+  if (!record_attempt_completion(replica_index, completed_at, latency_us, outcome)) {
+    return false;
+  }
+  record_logical_completion(outcome);
+  return true;
+}
+
+bool Phase2Controller::record_attempt_completion(std::size_t replica_index,
+                                                 SteadyTime completed_at,
+                                                 double latency_us,
+                                                 RequestOutcome outcome) noexcept {
   if (replica_index >= replicas_.size()) {
     increment_saturated(&observation_drops_);
     return false;
@@ -500,9 +582,14 @@ bool Phase2Controller::record_completion(std::size_t replica_index,
     increment_saturated(&observation_drops_);
     return false;
   }
-  if (outcome == RequestOutcome::kSuccess) increment_saturated(&deadline_goodput_);
-  if (missed) increment_saturated(&deadline_misses_);
   return true;
+}
+
+void Phase2Controller::record_logical_completion(RequestOutcome outcome) noexcept {
+  if (outcome == RequestOutcome::kSuccess) increment_saturated(&deadline_goodput_);
+  if (outcome == RequestOutcome::kTimeout || outcome == RequestOutcome::kDeadlineMiss) {
+    increment_saturated(&deadline_misses_);
+  }
 }
 
 void Phase2Controller::record_pre_dispatch_deadline_miss() noexcept {
@@ -525,14 +612,14 @@ void Phase2Controller::tick(SteadyTime now, bool force) {
   std::uint64_t failures = 0;
   for (const auto& replica : replicas_) {
     windows.push_back(replica->take_window());
-    stats.push_back(replica->stats());
+    stats.push_back(replica->stats(now));
     samples += windows.back().control_samples;
     failures += windows.back().failed;
   }
 
   update_health(now, windows, stats);
   stats.clear();
-  for (const auto& replica : replicas_) stats.push_back(replica->stats());
+  for (const auto& replica : replicas_) stats.push_back(replica->stats(now));
 
   if (config_.adaptive_concurrency && samples >= config_.aimd.minimum_window_samples) {
     const auto current = gate_.snapshot().limit;
@@ -705,11 +792,13 @@ std::shared_ptr<const ControllerSnapshot> Phase2Controller::make_snapshot(
   }
   result->replicas.reserve(replicas_.size());
   for (const auto& replica : replicas_) {
-    const auto state = replica->stats();
+    const auto state = replica->stats(now);
     result->replicas.push_back(ReplicaSnapshot{
         replica->id, state.health, replica->inflight.load(std::memory_order_relaxed),
         state.latency_ewma_us, state.latency_p95_us, state.error_ewma,
-        state.latency_samples, state.routed, state.completed, state.failed});
+        state.latency_samples, state.censored_latency_p95_lower_bound_us,
+        state.censored_latency_samples, state.routed, state.completed, state.failed,
+        state.timed_out});
   }
   return result;
 }

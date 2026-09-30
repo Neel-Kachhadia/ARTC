@@ -20,6 +20,8 @@ struct ReplicaStats {
   double error_ewma{0.0};
   double latency_p95_us{0.0};
   std::uint64_t latency_samples{0};
+  double censored_latency_p95_lower_bound_us{0.0};
+  std::uint64_t censored_latency_samples{0};
   std::uint64_t completed{0};
   std::uint64_t succeeded{0};
   std::uint64_t failed{0};
@@ -46,6 +48,9 @@ struct ReplicaWindow {
 
 struct ReplicaState {
   static constexpr std::size_t kLatencyWindowCapacity = 128;
+  // Keep censored latency as a short-lived routing signal so old hedge losses
+  // cannot permanently penalize a replica that has recovered.
+  static constexpr auto kCensoredLatencyHorizon = std::chrono::seconds(5);
 
   ReplicaState(std::string id, std::string address);
   bool observe_latency(double latency_us, double smoothing);
@@ -53,8 +58,14 @@ struct ReplicaState {
                           double latency_us, bool success, bool timeout,
                           bool deadline_missed, bool cancelled,
                           double smoothing);
+  bool record_censored_latency_lower_bound(
+      double latency_us,
+      std::chrono::steady_clock::time_point observed_at =
+          std::chrono::steady_clock::now());
   void record_routed() noexcept;
-  [[nodiscard]] ReplicaStats stats() const;
+  [[nodiscard]] ReplicaStats stats(
+      std::chrono::steady_clock::time_point now =
+          std::chrono::steady_clock::now()) const;
   [[nodiscard]] ReplicaWindow take_window();
   void set_health(HealthState health) noexcept;
 
@@ -67,12 +78,20 @@ struct ReplicaState {
   friend class EwmaLatencySelector;
   friend class P2CLatencyInflightSelector;
   mutable std::mutex observation_mutex_;
+  struct CensoredLatencySample {
+    double lower_bound_us{0.0};
+    std::chrono::steady_clock::time_point observed_at{};
+  };
   double latency_ewma_us_{0.0};
   std::uint64_t latency_samples_{0};
   double error_ewma_{0.0};
   std::array<double, kLatencyWindowCapacity> latency_window_{};
   std::size_t latency_window_size_{0};
   std::size_t latency_window_next_{0};
+  std::array<CensoredLatencySample, kLatencyWindowCapacity>
+      censored_latency_window_{};
+  std::size_t censored_latency_window_size_{0};
+  std::size_t censored_latency_window_next_{0};
   std::array<double, kLatencyWindowCapacity> control_latency_window_{};
   std::size_t control_latency_window_size_{0};
   std::size_t control_latency_window_next_{0};

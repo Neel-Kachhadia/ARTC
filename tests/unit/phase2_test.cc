@@ -1,6 +1,8 @@
 #include "artc/control/phase2.h"
+#include "artc/rpc/attempt_budget.h"
 
 #include <array>
+#include <atomic>
 #include <barrier>
 #include <cmath>
 #include <cstdint>
@@ -148,6 +150,25 @@ TEST(DeadlineFeasibilityTest, OneStragglerDoesNotPoisonFastReplicaEstimates) {
   EXPECT_EQ(infeasible.predicted_service_latency, 150ms);
 }
 
+TEST(DeadlineFeasibilityTest, CensoredHedgeLosersDoNotChangePhase2ServiceEstimate) {
+  auto request = request_with_budget(15ms);
+  ControllerSnapshot snapshot;
+  snapshot.replicas = {
+      {.id = "A1", .health = routing::HealthState::kHealthy,
+       .latency_ewma_us = 5'000.0, .latency_p95_us = 5'000.0,
+       .latency_samples = 8, .censored_latency_p95_lower_bound_us = 80'000.0,
+       .censored_latency_samples = 8},
+      {.id = "A2", .health = routing::HealthState::kHealthy,
+       .latency_ewma_us = 10'000.0, .latency_p95_us = 10'000.0,
+       .latency_samples = 8},
+  };
+
+  const auto feasible = evaluate_deadline_feasibility(
+      request, kSteady0, snapshot, 1ms, 1ms);
+  EXPECT_TRUE(feasible.feasible);
+  EXPECT_EQ(feasible.predicted_service_latency, 10ms);
+}
+
 TEST(AdmissionGateTest, PermitOwnershipSurvivesMovesLimitChangesAndClose) {
   AdmissionGate gate(1, 8, 2);
   auto first = gate.try_acquire();
@@ -277,6 +298,25 @@ TEST(ReplicaStateTest, BoundsSamplesAndLimitsOutlierImpactOnEwma) {
   EXPECT_TRUE(std::isfinite(replica.stats().latency_ewma_us));
 }
 
+TEST(ReplicaStateTest, CensoredStragglerLatencyIsOnlyARecentLowerBoundSignal) {
+  routing::ReplicaState replica("A1", "a1:5001");
+  ASSERT_TRUE(replica.observe_completion(kSteady0, 5'000.0, true, false, false,
+                                         false, 0.2));
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_TRUE(replica.record_censored_latency_lower_bound(
+        40'000.0 + i, kSteady0));
+  }
+  const auto stats = replica.stats(kSteady0 + 4s);
+  EXPECT_EQ(stats.latency_samples, 1U);
+  EXPECT_EQ(stats.succeeded, 1U);
+  EXPECT_EQ(stats.failed, 0U);
+  EXPECT_EQ(stats.censored_latency_samples, 2U);
+  EXPECT_EQ(stats.censored_latency_p95_lower_bound_us, 40'001.0);
+  const auto aged = replica.stats(kSteady0 + 5s);
+  EXPECT_EQ(aged.censored_latency_samples, 0U);
+  EXPECT_DOUBLE_EQ(aged.censored_latency_p95_lower_bound_us, 0.0);
+}
+
 TEST(AimdControllerTest, IncreasesOnlyOnControlWindowAndReducesOnOverload) {
   auto config = test_config();
   auto replicas = make_replicas();
@@ -395,6 +435,187 @@ TEST(AdaptiveSelectorTest, ExcludesUnavailableAndExplainsNormalizedScores) {
   EXPECT_EQ(selector.select(snapshot, replicas, 2).selected, 1U);
   snapshot.replicas[1].health = routing::HealthState::kUnavailable;
   EXPECT_FALSE(selector.select(snapshot, replicas, 3).selected.has_value());
+}
+
+TEST(AdaptiveSelectorTest, ExcludedPrimaryCannotBeSelectedForSpeculation) {
+  auto config = test_config();
+  config.recovery_probe_period = 1;
+  auto replicas = make_replicas();
+  ControllerSnapshot snapshot;
+  snapshot.route_limit = 10;
+  snapshot.replicas = {
+      ReplicaSnapshot{.id = "A1", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 1'000.0, .latency_samples = 4},
+      ReplicaSnapshot{.id = "A2", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 2'000.0, .latency_samples = 4},
+      ReplicaSnapshot{.id = "A3", .health = routing::HealthState::kUnavailable},
+  };
+  AdaptiveSelector selector(config);
+  for (std::uint64_t request_id = 0; request_id < 8; ++request_id) {
+    const auto result = selector.select(snapshot, replicas, request_id, 0);
+    ASSERT_TRUE(result.selected.has_value());
+    EXPECT_NE(*result.selected, 0U);
+    EXPECT_EQ(result.eligible, 1U);
+  }
+  EXPECT_FALSE(selector.select(snapshot, replicas, 1, 3).selected.has_value());
+}
+
+TEST(AdaptiveSelectorTest, SecondarySelectionIsHealthyOnlyAndDoesNotAdvancePrimaryProbes) {
+  auto config = test_config();
+  config.recovery_probe_period = 2;
+  auto replicas = make_replicas();
+  ControllerSnapshot snapshot;
+  snapshot.route_limit = 10;
+  snapshot.replicas = {
+      ReplicaSnapshot{.id = "A1", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 1'000.0, .latency_samples = 4},
+      ReplicaSnapshot{.id = "A2", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 2'000.0, .latency_samples = 4},
+      ReplicaSnapshot{.id = "A3", .health = routing::HealthState::kRecovering,
+                      .latency_ewma_us = 500.0, .latency_samples = 4},
+  };
+  AdaptiveSelector with_secondary(config);
+  AdaptiveSelector baseline(config);
+  ASSERT_EQ(with_secondary.select(snapshot, replicas, 0).selected,
+            baseline.select(snapshot, replicas, 0).selected);
+  const std::array<std::size_t, 1> excluded{0};
+  const auto hedge = with_secondary.select_secondary(snapshot, replicas, excluded);
+  ASSERT_TRUE(hedge.selected.has_value());
+  EXPECT_EQ(*hedge.selected, 1U);
+  EXPECT_EQ(hedge.eligible, 1U);
+  EXPECT_EQ(with_secondary.select(snapshot, replicas, 1).selected,
+            baseline.select(snapshot, replicas, 1).selected);
+
+  snapshot.replicas[1].health = routing::HealthState::kDegraded;
+  EXPECT_FALSE(with_secondary.select_secondary(snapshot, replicas, excluded)
+                   .selected.has_value());
+}
+
+TEST(AdaptiveSelectorTest, CensoredStragglerLowerBoundPenalizesRepeatedlySlowReplica) {
+  auto config = test_config();
+  auto replicas = make_replicas();
+  ControllerSnapshot snapshot;
+  snapshot.route_limit = 10;
+  snapshot.replicas = {
+      ReplicaSnapshot{.id = "A1", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 5'000.0, .latency_samples = 8,
+                      .censored_latency_p95_lower_bound_us = 40'000.0,
+                      .censored_latency_samples = 4},
+      ReplicaSnapshot{.id = "A2", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 10'000.0, .latency_samples = 8},
+      ReplicaSnapshot{.id = "A3", .health = routing::HealthState::kUnavailable},
+  };
+  AdaptiveSelector selector(config);
+  EXPECT_EQ(selector.select(snapshot, replicas, 1).selected, 1U);
+}
+
+TEST(AdaptiveSelectorTest, RecoveringReplicasReceiveOnlyBoundedProbeTraffic) {
+  auto config = test_config();
+  config.recovery_probe_period = 2;
+  auto replicas = make_replicas();
+  ControllerSnapshot snapshot;
+  snapshot.route_limit = 10;
+  snapshot.replicas = {
+      ReplicaSnapshot{.id = "A1", .health = routing::HealthState::kHealthy,
+                      .latency_ewma_us = 8'000.0, .latency_samples = 8},
+      ReplicaSnapshot{.id = "A2", .health = routing::HealthState::kRecovering},
+      ReplicaSnapshot{.id = "A3", .health = routing::HealthState::kUnavailable},
+  };
+  AdaptiveSelector selector(config);
+  EXPECT_EQ(selector.select(snapshot, replicas, 1).selected, 0U);
+  EXPECT_EQ(selector.select(snapshot, replicas, 2).selected, 0U);
+  EXPECT_EQ(selector.select(snapshot, replicas, 3).selected, 1U);
+
+  snapshot.replicas[0].health = routing::HealthState::kRecovering;
+  AdaptiveSelector all_recovering(config);
+  EXPECT_FALSE(all_recovering.select(snapshot, replicas, 1).selected.has_value());
+  EXPECT_FALSE(all_recovering.select(snapshot, replicas, 2).selected.has_value());
+  EXPECT_EQ(all_recovering.select(snapshot, replicas, 3).selected, 1U);
+}
+
+TEST(Phase2ControllerTest, SeparatesAttemptHealthFromLogicalGoodput) {
+  auto replicas = make_replicas();
+  auto config = test_config();
+  Phase2Controller controller(config, replicas, kSteady0);
+  for (std::size_t index = 0; index < 2; ++index) {
+    controller.record_backend_attempt(index);
+    ASSERT_TRUE(controller.record_attempt_completion(
+        index, kSteady0 + 10ms, 10'000.0, RequestOutcome::kSuccess));
+  }
+  controller.record_logical_completion(RequestOutcome::kSuccess);
+  controller.tick(kSteady0 + 100ms, true);
+  const auto snapshot = controller.snapshot();
+  EXPECT_EQ(snapshot->backend_attempts, 2U);
+  EXPECT_EQ(snapshot->deadline_goodput, 1U);
+  EXPECT_EQ(snapshot->replicas[0].completed_total, 1U);
+  EXPECT_EQ(snapshot->replicas[1].completed_total, 1U);
+}
+
+TEST(AttemptBudgetTest, RefillsFractionallyWithoutMovingBackwardsOrExceedingCapacity) {
+  using BudgetClock = artc::rpc::HedgeBudget::Clock;
+  const auto start = BudgetClock::time_point{};
+  artc::rpc::HedgeBudget budget({.capacity = 2, .refill_per_second = 0.5}, start);
+  ASSERT_TRUE(budget.try_consume(start));
+  ASSERT_TRUE(budget.try_consume(start));
+  EXPECT_FALSE(budget.try_consume(start));
+  EXPECT_DOUBLE_EQ(budget.snapshot(start + 1s).tokens, 0.5);
+  EXPECT_DOUBLE_EQ(budget.snapshot(start + 500ms).tokens, 0.5);
+  EXPECT_DOUBLE_EQ(budget.snapshot(start + 10s).tokens, 2.0);
+  const auto snapshot = budget.snapshot(start + 10s);
+  EXPECT_EQ(snapshot.available, 2U);
+  EXPECT_EQ(snapshot.consumed_total, 2U);
+  EXPECT_EQ(snapshot.denied_total, 1U);
+}
+
+TEST(AttemptBudgetTest, HedgeAndRetryBudgetsHaveIndependentCapacityAndCounters) {
+  using BudgetClock = artc::rpc::HedgeBudget::Clock;
+  const auto start = BudgetClock::time_point{};
+  artc::rpc::HedgeBudget hedges({.capacity = 1, .refill_per_second = 0.0}, start);
+  artc::rpc::RetryBudget retries({.capacity = 2, .refill_per_second = 0.0}, start);
+  ASSERT_TRUE(hedges.try_consume(start));
+  EXPECT_FALSE(hedges.try_consume(start));
+  ASSERT_TRUE(retries.try_consume(start));
+  EXPECT_EQ(hedges.snapshot(start).consumed_total, 1U);
+  EXPECT_EQ(hedges.snapshot(start).denied_total, 1U);
+  EXPECT_EQ(retries.snapshot(start).available, 1U);
+  EXPECT_EQ(retries.snapshot(start).denied_total, 0U);
+  EXPECT_THROW(artc::rpc::HedgeBudget(
+                   {.capacity = 1,
+                    .refill_per_second = std::numeric_limits<double>::infinity()},
+                   start),
+               std::invalid_argument);
+}
+
+TEST(AttemptBudgetTest, LargeClockJumpSaturatesWithoutDurationSubtractionOverflow) {
+  using BudgetClock = artc::rpc::HedgeBudget::Clock;
+  artc::rpc::HedgeBudget budget(
+      {.capacity = 2, .refill_per_second = 0.5},
+      BudgetClock::time_point::min());
+  const auto snapshot = budget.snapshot(BudgetClock::time_point::max());
+  EXPECT_DOUBLE_EQ(snapshot.tokens, 2.0);
+  EXPECT_EQ(snapshot.available, 2U);
+}
+
+TEST(AttemptBudgetTest, ConcurrentConsumesNeverOverspendTokens) {
+  using BudgetClock = artc::rpc::HedgeBudget::Clock;
+  constexpr std::uint32_t kCapacity = 128;
+  const auto start = BudgetClock::time_point{};
+  artc::rpc::RetryBudget budget({.capacity = kCapacity, .refill_per_second = 0.0}, start);
+  std::atomic<std::uint32_t> consumed{0};
+  std::vector<std::thread> workers;
+  for (std::uint32_t thread = 0; thread < 8; ++thread) {
+    workers.emplace_back([&] {
+      for (std::uint32_t attempt = 0; attempt < 100; ++attempt) {
+        if (budget.try_consume(start)) consumed.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  const auto snapshot = budget.snapshot(start);
+  EXPECT_EQ(consumed.load(std::memory_order_relaxed), kCapacity);
+  EXPECT_EQ(snapshot.consumed_total, kCapacity);
+  EXPECT_EQ(snapshot.denied_total, 800U - kCapacity);
+  EXPECT_EQ(snapshot.tokens, 0.0);
 }
 
 TEST(AdaptiveSelectorTest, DefinesEmptyAndSingleReplicaPools) {

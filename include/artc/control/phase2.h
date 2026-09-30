@@ -102,9 +102,12 @@ struct ReplicaSnapshot {
   double latency_p95_us{0.0};
   double error_ewma{0.0};
   std::uint64_t latency_samples{0};
+  double censored_latency_p95_lower_bound_us{0.0};
+  std::uint64_t censored_latency_samples{0};
   std::uint64_t routed_total{0};
   std::uint64_t completed_total{0};
   std::uint64_t failed_total{0};
+  std::uint64_t timed_out_total{0};
 };
 
 struct ControllerSnapshot {
@@ -212,7 +215,12 @@ class AdaptiveSelector {
   [[nodiscard]] SelectionResult select(
       const ControllerSnapshot& snapshot,
       std::span<const std::shared_ptr<routing::ReplicaState>> replicas,
-      std::uint64_t request_id) noexcept;
+      std::uint64_t request_id,
+      std::optional<std::size_t> excluded_index = std::nullopt) noexcept;
+  [[nodiscard]] SelectionResult select_secondary(
+      const ControllerSnapshot& snapshot,
+      std::span<const std::shared_ptr<routing::ReplicaState>> replicas,
+      std::span<const std::size_t> excluded_indices) const noexcept;
   [[nodiscard]] std::vector<CandidateScore> explain(
       const ControllerSnapshot& snapshot,
       std::span<const std::shared_ptr<routing::ReplicaState>> replicas) const;
@@ -239,6 +247,9 @@ class Phase2Controller {
   [[nodiscard]] AcquireResult try_acquire();
   void record_admission(AdmissionResult result) noexcept;
   void record_backend_attempt(std::size_t replica_index) noexcept;
+  bool record_attempt_completion(std::size_t replica_index, SteadyTime completed_at,
+                                 double latency_us, RequestOutcome outcome) noexcept;
+  void record_logical_completion(RequestOutcome outcome) noexcept;
   bool record_completion(std::size_t replica_index, SteadyTime completed_at,
                          double latency_us, RequestOutcome outcome) noexcept;
   void record_pre_dispatch_deadline_miss() noexcept;

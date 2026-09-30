@@ -1,5 +1,6 @@
 #include "artc/routing/selector.h"
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <limits>
@@ -115,17 +116,43 @@ bool ReplicaState::observe_completion(
   return std::isfinite(latency_ewma_us_) && std::isfinite(error_ewma_);
 }
 
+bool ReplicaState::record_censored_latency_lower_bound(
+    double latency_us, std::chrono::steady_clock::time_point observed_at) {
+  constexpr double kMaximumLatencyUs = 60'000'000.0;
+  if (!std::isfinite(latency_us) || latency_us <= 0.0) return false;
+  std::lock_guard lock(observation_mutex_);
+  censored_latency_window_[censored_latency_window_next_] = {
+      .lower_bound_us = std::min(latency_us, kMaximumLatencyUs),
+      .observed_at = observed_at};
+  censored_latency_window_next_ =
+      (censored_latency_window_next_ + 1) % kLatencyWindowCapacity;
+  censored_latency_window_size_ =
+      std::min(censored_latency_window_size_ + 1, kLatencyWindowCapacity);
+  return true;
+}
+
 void ReplicaState::record_routed() noexcept {
   std::lock_guard lock(observation_mutex_);
   increment_saturated(&routed_);
 }
 
-ReplicaStats ReplicaState::stats() const {
+ReplicaStats ReplicaState::stats(std::chrono::steady_clock::time_point now) const {
   std::lock_guard lock(observation_mutex_);
+  std::array<double, kLatencyWindowCapacity> recent_censored{};
+  std::size_t recent_censored_size = 0;
+  for (std::size_t index = 0; index < censored_latency_window_size_; ++index) {
+    const auto& sample = censored_latency_window_[index];
+    if (now < sample.observed_at ||
+        now - sample.observed_at >= kCensoredLatencyHorizon) continue;
+    recent_censored[recent_censored_size++] = sample.lower_bound_us;
+  }
   return ReplicaStats{.latency_ewma_us = latency_ewma_us_,
                       .error_ewma = error_ewma_,
                       .latency_p95_us = window_p95(latency_window_, latency_window_size_),
                       .latency_samples = latency_samples_,
+                      .censored_latency_p95_lower_bound_us =
+                          window_p95(recent_censored, recent_censored_size),
+                      .censored_latency_samples = recent_censored_size,
                       .completed = completed_,
                       .succeeded = succeeded_,
                       .failed = failed_,

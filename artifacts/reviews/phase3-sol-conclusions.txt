@@ -1,0 +1,12 @@
+Sol High architecture decision:
+- Fixed conservative bound: max active 2, max total 3, no more than one hedge.
+- Retry only after all currently active attempts fail; hedge timer is the only speculative path while primary remains unresolved.
+- Recheck remaining deadline immediately before each committed attempt; default retry classification is UNAVAILABLE; deterministic permanent-failure precedence avoids last-response-wins.
+- Hedge and retry use separate route-wide continuous-refill token budgets, consumed at committed dispatch and never refunded.
+
+Sol Max concurrency/lifetime review and verified repair list:
+- Found and repaired late-success accounting, stop-token shutdown checks, stale clock use at callback time, target health/deadline checks, duration conversion validation, unsolicited backend CANCELLED handling, borrowed server-context lifetime/UAF risk, cancellation-ignoring dependency behavior, and test callback draining.
+- Final review identified no remaining UAF, deadlock, double completion, admission-permit, or budget race in the reviewed implementation.
+- This review is advisory; current tests/sanitizers remain the objective evidence.
+
+Current local engineering decision not yet independently reviewed: a short global dispatch mutex linearizes StartCall commitment against shutdown. Lock order is manager mutex then dispatch mutex; shutdown releases dispatch mutex before requesting stop (whose callbacks acquire manager mutex). It trades dispatch-commit serialization for a clear shutdown no-new-work boundary.

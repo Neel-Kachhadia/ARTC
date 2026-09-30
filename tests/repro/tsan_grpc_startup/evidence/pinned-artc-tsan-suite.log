@@ -1,0 +1,58 @@
+Internal ctest changing into directory: /home/neel/Projects/ARTC-SWE/ARTC/build/pinned-tsan
+Test project /home/neel/Projects/ARTC-SWE/ARTC/build/pinned-tsan
+      Start  1: SelectorTest.RoundRobinSequenceAndCounterWrap
+ 1/26 Test  #1: SelectorTest.RoundRobinSequenceAndCounterWrap .............................   Passed    0.04 sec
+      Start  2: SelectorTest.LeastInflightUsesStableTieBreakAndExactLeases
+ 2/26 Test  #2: SelectorTest.LeastInflightUsesStableTieBreakAndExactLeases ................   Passed    0.04 sec
+      Start  3: SelectorTest.EmptyAndNullPoolsFailBeforeSelection
+ 3/26 Test  #3: SelectorTest.EmptyAndNullPoolsFailBeforeSelection .........................   Passed    0.05 sec
+      Start  4: SelectorTest.EwmaColdStartSamplesEachReplicaBeforeScoring
+ 4/26 Test  #4: SelectorTest.EwmaColdStartSamplesEachReplicaBeforeScoring .................   Passed    0.04 sec
+      Start  5: SelectorTest.P2CSeedIsRepeatableAndSmallPoolsAreDefined
+ 5/26 Test  #5: SelectorTest.P2CSeedIsRepeatableAndSmallPoolsAreDefined ...................   Passed    0.04 sec
+      Start  6: SelectorTest.ConcurrentSelectionsReleaseEveryInflightReservation
+ 6/26 Test  #6: SelectorTest.ConcurrentSelectionsReleaseEveryInflightReservation ..........   Passed    0.34 sec
+      Start  7: SelectorTest.PolicyNamesRejectUnknownValues
+ 7/26 Test  #7: SelectorTest.PolicyNamesRejectUnknownValues ...............................   Passed    0.03 sec
+      Start  8: ArrivalScheduleTest.ConstantRateSchedulesIndependentlyOfCompletion
+ 8/26 Test  #8: ArrivalScheduleTest.ConstantRateSchedulesIndependentlyOfCompletion ........   Passed    0.03 sec
+      Start  9: ArrivalScheduleTest.PoissonScheduleRepeatsForSameSeed
+ 9/26 Test  #9: ArrivalScheduleTest.PoissonScheduleRepeatsForSameSeed .....................   Passed    0.03 sec
+      Start 10: ArrivalScheduleTest.StepHasExactRateBoundary
+10/26 Test #10: ArrivalScheduleTest.StepHasExactRateBoundary ..............................   Passed    0.03 sec
+      Start 11: ArrivalScheduleTest.RampSolvesIntegratedRate
+11/26 Test #11: ArrivalScheduleTest.RampSolvesIntegratedRate ..............................   Passed    0.03 sec
+      Start 12: ArrivalScheduleTest.BurstUsesConfiguredPeriodAndDuration
+12/26 Test #12: ArrivalScheduleTest.BurstUsesConfiguredPeriodAndDuration ..................   Passed    0.04 sec
+      Start 13: ArrivalScheduleTest.ScriptedArrivalsPreserveEqualTimesAndRejectBadOrder
+13/26 Test #13: ArrivalScheduleTest.ScriptedArrivalsPreserveEqualTimesAndRejectBadOrder ...   Passed    0.03 sec
+      Start 14: ArrivalScheduleTest.InvalidRateDurationAndBoundFailExplicitly
+14/26 Test #14: ArrivalScheduleTest.InvalidRateDurationAndBoundFailExplicitly .............   Passed    0.04 sec
+      Start 15: ArrivalScheduleTest.ParsingRejectsUnsupportedModes
+15/26 Test #15: ArrivalScheduleTest.ParsingRejectsUnsupportedModes ........................   Passed    0.04 sec
+      Start 16: HistogramTest.EmptySummaryHasNoPercentiles
+16/26 Test #16: HistogramTest.EmptySummaryHasNoPercentiles ................................   Passed    0.03 sec
+      Start 17: HistogramTest.HdrPercentilesMatchKnownSampleSet
+17/26 Test #17: HistogramTest.HdrPercentilesMatchKnownSampleSet ...........................   Passed    0.04 sec
+      Start 18: HistogramTest.NanosecondInputsAndLargeRangesStayBounded
+18/26 Test #18: HistogramTest.NanosecondInputsAndLargeRangesStayBounded ...................   Passed    0.06 sec
+      Start 19: HistogramTest.P999IsOmittedUntilTailHasEnoughSamples
+19/26 Test #19: HistogramTest.P999IsOmittedUntilTailHasEnoughSamples ......................   Passed    0.12 sec
+      Start 20: HistogramTest.RawBucketsAreAtomicallyWrittenAndRetainCounts
+20/26 Test #20: HistogramTest.RawBucketsAreAtomicallyWrittenAndRetainCounts ...............   Passed    0.04 sec
+      Start 21: ProtocolTest.RoundTripsBoundaryValuesAndDependencyFlag
+21/26 Test #21: ProtocolTest.RoundTripsBoundaryValuesAndDependencyFlag ....................   Passed    0.04 sec
+      Start 22: RpcServicesTest.DependencyCallsAndAllRoutingPoliciesWork
+22/26 Test #22: RpcServicesTest.DependencyCallsAndAllRoutingPoliciesWork ..................   Passed    2.54 sec
+      Start 23: RpcServicesTest.InvalidServiceBRequestReturnsInvalidArgument
+23/26 Test #23: RpcServicesTest.InvalidServiceBRequestReturnsInvalidArgument ..............   Passed    1.16 sec
+      Start 24: RpcServicesTest.HealthReportsReadyComponentIdentity
+24/26 Test #24: RpcServicesTest.HealthReportsReadyComponentIdentity .......................   Passed    1.12 sec
+      Start 25: RpcServicesTest.ServiceACancellationCompletesAndAllowsSubsequentCalls
+25/26 Test #25: RpcServicesTest.ServiceACancellationCompletesAndAllowsSubsequentCalls .....   Passed    1.28 sec
+      Start 26: Loadgen.ConstantScheduleValidation
+26/26 Test #26: Loadgen.ConstantScheduleValidation ........................................   Passed    0.09 sec
+
+100% tests passed, 0 tests failed out of 26
+
+Total Test time (real) =   7.55 sec

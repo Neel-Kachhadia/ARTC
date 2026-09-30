@@ -1,0 +1,434 @@
+{
+  "CMakePresets.json": {
+    "mtime": 1790598720.5052223,
+    "seen": 1790748280.7371557,
+    "ast_hash": "0fa8f1a79997e4a0da63448ae3f67e03",
+    "semantic_hash": "0fa8f1a79997e4a0da63448ae3f67e03"
+  },
+  "include/artc/bench/arrival_schedule.h": {
+    "mtime": 1790532793.8159804,
+    "seen": 1790748280.7371585,
+    "ast_hash": "8a4e319b78f2bddc1c6a27747772f8c4",
+    "semantic_hash": "8a4e319b78f2bddc1c6a27747772f8c4"
+  },
+  "include/artc/bench/histogram.h": {
+    "mtime": 1790532856.7926083,
+    "seen": 1790748280.73716,
+    "ast_hash": "5fabd97b2b6afbbf05c94d9c2251295b",
+    "semantic_hash": "5fabd97b2b6afbbf05c94d9c2251295b"
+  },
+  "include/artc/control/phase2.h": {
+    "mtime": 1790612941.2779188,
+    "seen": 1790748280.7371607,
+    "ast_hash": "e987a0b1449c44f5b8b5c5d8c3d9787d",
+    "semantic_hash": "e987a0b1449c44f5b8b5c5d8c3d9787d"
+  },
+  "include/artc/routing/selector.h": {
+    "mtime": 1790612458.1590207,
+    "seen": 1790748280.7371612,
+    "ast_hash": "08f822d0eef3191faaab191b81cbb69b",
+    "semantic_hash": "08f822d0eef3191faaab191b81cbb69b"
+  },
+  "include/artc/rpc/services.h": {
+    "mtime": 1790611028.331428,
+    "seen": 1790748280.7371616,
+    "ast_hash": "968de8b37f7857f577ca4389f2f6be9b",
+    "semantic_hash": "968de8b37f7857f577ca4389f2f6be9b"
+  },
+  "lab/analyze_phase2.py": {
+    "mtime": 1790695795.8990173,
+    "seen": 1790748280.7371624,
+    "ast_hash": "126c93b9465565e57e1228d2f967c992",
+    "semantic_hash": "126c93b9465565e57e1228d2f967c992"
+  },
+  "lab/analyze_phase2_resources.py": {
+    "mtime": 1790690776.7491176,
+    "seen": 1790748280.7371628,
+    "ast_hash": "0e371617d2d4888fd3b95a87a7866ff1",
+    "semantic_hash": "0e371617d2d4888fd3b95a87a7866ff1"
+  },
+  "lab/run_phase1_gates.sh": {
+    "mtime": 1790587861.3928595,
+    "seen": 1790748280.7371635,
+    "ast_hash": "6e908a55bae5b1b0e7a3f4d5129b20e8",
+    "semantic_hash": "6e908a55bae5b1b0e7a3f4d5129b20e8"
+  },
+  "lab/run_phase2_experiments.sh": {
+    "mtime": 1790695458.9647503,
+    "seen": 1790748280.737164,
+    "ast_hash": "0c46f944dfa828aca99862ab668eb4ce",
+    "semantic_hash": "0c46f944dfa828aca99862ab668eb4ce"
+  },
+  "lab/run_phase2_gates.sh": {
+    "mtime": 1790685842.6965685,
+    "seen": 1790748280.7371645,
+    "ast_hash": "03dab0788ee458ac9ea222235f8fdcd9",
+    "semantic_hash": "03dab0788ee458ac9ea222235f8fdcd9"
+  },
+  "lab/run_phase2_soak.sh": {
+    "mtime": 1790688925.0829582,
+    "seen": 1790748280.7371652,
+    "ast_hash": "5f0e194b0465ac417547c7785f5cfb2b",
+    "semantic_hash": "5f0e194b0465ac417547c7785f5cfb2b"
+  },
+  "lab/validate_artifacts.py": {
+    "mtime": 1790682126.46154,
+    "seen": 1790748280.737166,
+    "ast_hash": "817a4d316dfdbede699f1738da504b8f",
+    "semantic_hash": "817a4d316dfdbede699f1738da504b8f"
+  },
+  "src/app/lab_main.cc": {
+    "mtime": 1790680921.7098067,
+    "seen": 1790748280.7371664,
+    "ast_hash": "d132964d49953284cf0dd0015d72e312",
+    "semantic_hash": "d132964d49953284cf0dd0015d72e312"
+  },
+  "src/app/services.cc": {
+    "mtime": 1790683256.5652888,
+    "seen": 1790748280.737167,
+    "ast_hash": "5c4a67ee7607e39786a512048742a6a4",
+    "semantic_hash": "5c4a67ee7607e39786a512048742a6a4"
+  },
+  "src/bench/arrival_schedule.cc": {
+    "mtime": 1790532793.8469818,
+    "seen": 1790748280.7371676,
+    "ast_hash": "d46d01aee80666f65aa13fe743fc61cc",
+    "semantic_hash": "d46d01aee80666f65aa13fe743fc61cc"
+  },
+  "src/bench/control_bench_main.cc": {
+    "mtime": 1790683108.8428605,
+    "seen": 1790748280.7371683,
+    "ast_hash": "61c8a19dd39ce7d62cdbaf18509196ba",
+    "semantic_hash": "61c8a19dd39ce7d62cdbaf18509196ba"
+  },
+  "src/bench/histogram.cc": {
+    "mtime": 1790532856.8226097,
+    "seen": 1790748280.7371688,
+    "ast_hash": "70e0b6caa265edae91ebd2b1a898235c",
+    "semantic_hash": "70e0b6caa265edae91ebd2b1a898235c"
+  },
+  "src/bench/loadgen_main.cc": {
+    "mtime": 1790690924.1073227,
+    "seen": 1790748280.7371693,
+    "ast_hash": "6ae56e31b58d56dd78a6c2dec6cf00ff",
+    "semantic_hash": "6ae56e31b58d56dd78a6c2dec6cf00ff"
+  },
+  "src/control/phase2.cc": {
+    "mtime": 1790693142.158835,
+    "seen": 1790748280.7371697,
+    "ast_hash": "8e6bbf58b19929d492f84e20c4995ec6",
+    "semantic_hash": "8e6bbf58b19929d492f84e20c4995ec6"
+  },
+  "src/routing/selector.cc": {
+    "mtime": 1790612458.2210205,
+    "seen": 1790748280.7371702,
+    "ast_hash": "7563acc8227cae760c7a0b82fa39c9b8",
+    "semantic_hash": "7563acc8227cae760c7a0b82fa39c9b8"
+  },
+  "tests/integration/rpc_services_test.cc": {
+    "mtime": 1790681471.4422388,
+    "seen": 1790748280.7371707,
+    "ast_hash": "0a865ea2c788ac083b104afdb5328faa",
+    "semantic_hash": "0a865ea2c788ac083b104afdb5328faa"
+  },
+  "tests/repro/tsan_grpc_startup/main.cc": {
+    "mtime": 1790589874.879238,
+    "seen": 1790748280.7371716,
+    "ast_hash": "8c9d374f894833e4888afb3951978089",
+    "semantic_hash": "8c9d374f894833e4888afb3951978089"
+  },
+  "tests/repro/tsan_grpc_startup/positive_control.cc": {
+    "mtime": 1790603500.003235,
+    "seen": 1790748280.7371721,
+    "ast_hash": "77aad485b427ed1d443f52ac8e348d5d",
+    "semantic_hash": "77aad485b427ed1d443f52ac8e348d5d"
+  },
+  "tests/unit/arrival_schedule_test.cc": {
+    "mtime": 1790534252.617333,
+    "seen": 1790748280.7371728,
+    "ast_hash": "59402cf958920e9fe727e1ea8000ceb3",
+    "semantic_hash": "59402cf958920e9fe727e1ea8000ceb3"
+  },
+  "tests/unit/histogram_test.cc": {
+    "mtime": 1790533117.9556193,
+    "seen": 1790748280.7371733,
+    "ast_hash": "0b32b72ddd8171249a1ced9eac37c985",
+    "semantic_hash": "0b32b72ddd8171249a1ced9eac37c985"
+  },
+  "tests/unit/phase2_test.cc": {
+    "mtime": 1790693119.9522371,
+    "seen": 1790748280.7371738,
+    "ast_hash": "177b66b49a63f31abfbf04f418eb90ea",
+    "semantic_hash": "177b66b49a63f31abfbf04f418eb90ea"
+  },
+  "tests/unit/protocol_test.cc": {
+    "mtime": 1790532957.227396,
+    "seen": 1790748280.7371745,
+    "ast_hash": "e90c9f7b35807c21705542205e5f2402",
+    "semantic_hash": "e90c9f7b35807c21705542205e5f2402"
+  },
+  "tests/unit/selector_test.cc": {
+    "mtime": 1790534252.5853326,
+    "seen": 1790748280.7371752,
+    "ast_hash": "b928686582624694c2fa05754cbd6a64",
+    "semantic_hash": "b928686582624694c2fa05754cbd6a64"
+  },
+  "CMakeLists.txt": {
+    "mtime": 1790681822.0891623,
+    "seen": 1790749695.1224759,
+    "ast_hash": "f5dcc27160c60f9d35862260d8001b3d",
+    "semantic_hash": "f5dcc27160c60f9d35862260d8001b3d"
+  },
+  "README.md": {
+    "mtime": 1790532306.0482476,
+    "seen": 1790749695.122477,
+    "ast_hash": "efc3d1efa1f709cc112451386027a789",
+    "semantic_hash": "efc3d1efa1f709cc112451386027a789"
+  },
+  "docs/architecture/01_SYSTEM_ARCHITECTURE.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224775,
+    "ast_hash": "54e83cb644ff91382e09672a6be8455e",
+    "semantic_hash": "54e83cb644ff91382e09672a6be8455e"
+  },
+  "docs/architecture/02_REQUEST_LIFECYCLE_AND_CONTROL.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224782,
+    "ast_hash": "7be1b36476ac7b518c5823b2aaa89849",
+    "semantic_hash": "7be1b36476ac7b518c5823b2aaa89849"
+  },
+  "docs/architecture/03_INVARIANTS_AND_CORRECTNESS.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.122479,
+    "ast_hash": "707224d398dcf5760d6f605300100870",
+    "semantic_hash": "707224d398dcf5760d6f605300100870"
+  },
+  "docs/architecture/05_TESTING_AND_VERIFICATION.md": {
+    "mtime": 1790532312.2938056,
+    "seen": 1790749695.1224794,
+    "ast_hash": "8bcc335be55803ac5323cdea24bb7373",
+    "semantic_hash": "8bcc335be55803ac5323cdea24bb7373"
+  },
+  "docs/architecture/06_BENCHMARK_METHODOLOGY.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.12248,
+    "ast_hash": "a6e74923339719d45b7a090487f2522b",
+    "semantic_hash": "a6e74923339719d45b7a090487f2522b"
+  },
+  "docs/architecture/07_OBSERVABILITY_AND_OPERATIONS.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224804,
+    "ast_hash": "7c41ad1abb8701c0b7105ec0f20428ec",
+    "semantic_hash": "7c41ad1abb8701c0b7105ec0f20428ec"
+  },
+  "docs/architecture/08_SECURITY_AND_ROBUSTNESS.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224806,
+    "ast_hash": "a2738ca1f560a6747cb861ff4cc87b7f",
+    "semantic_hash": "a2738ca1f560a6747cb861ff4cc87b7f"
+  },
+  "docs/architecture/09_CI_RELEASE_GATES.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.122481,
+    "ast_hash": "bb8eb8e84da594795e6ddc6495682d0f",
+    "semantic_hash": "bb8eb8e84da594795e6ddc6495682d0f"
+  },
+  "docs/architecture/10_IMPLEMENTATION_PLAN.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224816,
+    "ast_hash": "ee09dd4a9e566146d388a70ce419de7e",
+    "semantic_hash": "ee09dd4a9e566146d388a70ce419de7e"
+  },
+  "docs/architecture/11_REPOSITORY_LAYOUT.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.122482,
+    "ast_hash": "fe75caf73fdd50a3df71df4330dbde1d",
+    "semantic_hash": "fe75caf73fdd50a3df71df4330dbde1d"
+  },
+  "docs/architecture/12_TRACEABILITY_MATRIX.md": {
+    "mtime": 1790532312.3248084,
+    "seen": 1790749695.1224828,
+    "ast_hash": "29b74b7736174c148bb9383676873f7d",
+    "semantic_hash": "29b74b7736174c148bb9383676873f7d"
+  },
+  "docs/architecture/14_REFERENCES.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224833,
+    "ast_hash": "5951fa663fcc987a8332912749389a71",
+    "semantic_hash": "5951fa663fcc987a8332912749389a71"
+  },
+  "docs/architecture/15_PRODUCTION_READINESS_REVIEW.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224852,
+    "ast_hash": "114ad937054977b3bc82cee2341883b9",
+    "semantic_hash": "114ad937054977b3bc82cee2341883b9"
+  },
+  "docs/architecture/ADR-001_PINNED_GRPC_DEPENDENCIES.md": {
+    "mtime": 1790606100.9403005,
+    "seen": 1790749695.1224859,
+    "ast_hash": "f3408f793c2ceba5eedb635b05d2a6cd",
+    "semantic_hash": "f3408f793c2ceba5eedb635b05d2a6cd"
+  },
+  "docs/architecture/ADR-002_PHASE2_ADAPTIVE_CONTROL.md": {
+    "mtime": 1790697506.8514895,
+    "seen": 1790749695.1224864,
+    "ast_hash": "65fa30b81cd1f17f818e0aa0a888f664",
+    "semantic_hash": "65fa30b81cd1f17f818e0aa0a888f664"
+  },
+  "docs/failures/04_FAILURE_MODEL_AND_FAULT_LAB.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224868,
+    "ast_hash": "c4d9664a603622a1989e1a297bd8328e",
+    "semantic_hash": "c4d9664a603622a1989e1a297bd8328e"
+  },
+  "docs/interview/13_INTERVIEW_READINESS.md": {
+    "mtime": 1790530561.0,
+    "seen": 1790749695.1224873,
+    "ast_hash": "f18b6080122e358fe155f63bdd55f429",
+    "semantic_hash": "f18b6080122e358fe155f63bdd55f429"
+  },
+  "lab/compose.yaml": {
+    "mtime": 1790681318.7848995,
+    "seen": 1790749695.1224878,
+    "ast_hash": "6663b3bcb5ab4853be9ca0dc13de7f65",
+    "semantic_hash": "6663b3bcb5ab4853be9ca0dc13de7f65"
+  },
+  "tests/repro/tsan_grpc_startup/CMakeLists.txt": {
+    "mtime": 1790590701.0592422,
+    "seen": 1790749695.1224883,
+    "ast_hash": "c033e41341e2c5045c96aa637b05ffc7",
+    "semantic_hash": "c033e41341e2c5045c96aa637b05ffc7"
+  },
+  "tests/repro/tsan_grpc_startup/README.md": {
+    "mtime": 1790603878.4957008,
+    "seen": 1790749695.1224887,
+    "ast_hash": "496a49a564089363c8297b049d2f8aaf",
+    "semantic_hash": "496a49a564089363c8297b049d2f8aaf"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/artc-lifecycle-audit.txt": {
+    "mtime": 1790597501.671142,
+    "seen": 1790749695.1224895,
+    "ast_hash": "0f9005f5e7ced75623ee95dcb270d7c0",
+    "semantic_hash": "0f9005f5e7ced75623ee95dcb270d7c0"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/artc-system-ldd.txt": {
+    "mtime": 1790593631.172871,
+    "seen": 1790749695.12249,
+    "ast_hash": "b6de69088314008e25a0fdb2e0cc7255",
+    "semantic_hash": "b6de69088314008e25a0fdb2e0cc7255"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/instrumentation-check.txt": {
+    "mtime": 1790595321.8119893,
+    "seen": 1790749695.1224923,
+    "ast_hash": "2a914bb82005a021e53d7f37837eeea8",
+    "semantic_hash": "2a914bb82005a021e53d7f37837eeea8"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/old-source-build-recipe.txt": {
+    "mtime": 1790603862.059684,
+    "seen": 1790749695.122493,
+    "ast_hash": "a808f2db0d24d0eb8e10b5fde19e630e",
+    "semantic_hash": "a808f2db0d24d0eb8e10b5fde19e630e"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/old-source-ldd.txt": {
+    "mtime": 1790603500.1832354,
+    "seen": 1790749695.1224935,
+    "ast_hash": "7c17c0262a6f6a0f8b31691e58f6fae4",
+    "semantic_hash": "7c17c0262a6f6a0f8b31691e58f6fae4"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/old-source-stack.txt": {
+    "mtime": 1790603855.8126776,
+    "seen": 1790749695.122494,
+    "ast_hash": "63a336768a9c8ddbe24939125cfbc99c",
+    "semantic_hash": "63a336768a9c8ddbe24939125cfbc99c"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/old-source-startup-race.txt": {
+    "mtime": 1790603500.0200734,
+    "seen": 1790749695.1224945,
+    "ast_hash": "06789db6a3221d42441b4c0654d99a79",
+    "semantic_hash": "06789db6a3221d42441b4c0654d99a79"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-artc-generator-concurrency.txt": {
+    "mtime": 1790598361.2549818,
+    "seen": 1790749695.122495,
+    "ast_hash": "43dc612bffc0caa14c07a56cea5d4079",
+    "semantic_hash": "43dc612bffc0caa14c07a56cea5d4079"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-artc-ldd.txt": {
+    "mtime": 1790595321.45998,
+    "seen": 1790749695.1224954,
+    "ast_hash": "9be6986adc44890cd8d070b670c4ec45",
+    "semantic_hash": "9be6986adc44890cd8d070b670c4ec45"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-artc-shutdown.txt": {
+    "mtime": 1790595333.3832936,
+    "seen": 1790749695.122496,
+    "ast_hash": "7fa22258cd46bd37d565e634b9567afa",
+    "semantic_hash": "7fa22258cd46bd37d565e634b9567afa"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-benchmark-comparison.txt": {
+    "mtime": 1790606085.705158,
+    "seen": 1790749695.1224966,
+    "ast_hash": "00266f658f8ce3b7adeb3c7d100115e2",
+    "semantic_hash": "00266f658f8ce3b7adeb3c7d100115e2"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-health-repetitions.txt": {
+    "mtime": 1790603500.1892354,
+    "seen": 1790749695.122497,
+    "ast_hash": "30c0b0f400448ca7bcb7bada2eee1fb8",
+    "semantic_hash": "30c0b0f400448ca7bcb7bada2eee1fb8"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-ldd.txt": {
+    "mtime": 1790593631.1968896,
+    "seen": 1790749695.1224976,
+    "ast_hash": "76a5eb57f8808e939686c079111c057a",
+    "semantic_hash": "76a5eb57f8808e939686c079111c057a"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-repetitions.txt": {
+    "mtime": 1790603500.1862354,
+    "seen": 1790749695.122498,
+    "ast_hash": "1436f616d51af57b0f0894b7f1bb7c43",
+    "semantic_hash": "1436f616d51af57b0f0894b7f1bb7c43"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/pinned-stack.txt": {
+    "mtime": 1790596279.4986796,
+    "seen": 1790749695.1224985,
+    "ast_hash": "43496a7cba682a7e46dcf3b6c81e6bde",
+    "semantic_hash": "43496a7cba682a7e46dcf3b6c81e6bde"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/system-image-runtime.txt": {
+    "mtime": 1790603835.5876567,
+    "seen": 1790749695.122499,
+    "ast_hash": "b270fcadf8f3b952cbd9edcbe65496b5",
+    "semantic_hash": "b270fcadf8f3b952cbd9edcbe65496b5"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/system-repetitions.txt": {
+    "mtime": 1790593631.189428,
+    "seen": 1790749695.1224995,
+    "ast_hash": "750da8f4d4c0f075b9b68b84472f235d",
+    "semantic_hash": "750da8f4d4c0f075b9b68b84472f235d"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/system-reproducer-ldd.txt": {
+    "mtime": 1790593631.1854281,
+    "seen": 1790749695.1225,
+    "ast_hash": "72db56826e160487d2f89ed8f1ec6b0d",
+    "semantic_hash": "72db56826e160487d2f89ed8f1ec6b0d"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/system-stack.txt": {
+    "mtime": 1790597614.0140524,
+    "seen": 1790749695.1225007,
+    "ast_hash": "3142f59b9bde87eaf36be54a87ebbb45",
+    "semantic_hash": "3142f59b9bde87eaf36be54a87ebbb45"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/tsan-positive-control-report.txt": {
+    "mtime": 1790603500.1962354,
+    "seen": 1790749695.122501,
+    "ast_hash": "033cd89477d0e0b5556c70094e306873",
+    "semantic_hash": "033cd89477d0e0b5556c70094e306873"
+  },
+  "tests/repro/tsan_grpc_startup/evidence/tsan-positive-control.txt": {
+    "mtime": 1790603500.1912355,
+    "seen": 1790749695.1225014,
+    "ast_hash": "c3abed2895c31edd433a140bf5955921",
+    "semantic_hash": "c3abed2895c31edd433a140bf5955921"
+  }
+}

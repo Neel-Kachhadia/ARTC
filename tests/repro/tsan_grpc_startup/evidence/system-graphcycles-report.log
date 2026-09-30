@@ -1,0 +1,21 @@
+phase=build_start_begin
+==================
+WARNING: ThreadSanitizer: data race (pid=3)
+  Read of size 8 at 0x7ffff5ac3380 by thread T3:
+    #0 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:98 (libtsan.so.2+0x8bbd0) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:96 (libtsan.so.2+0x8bbd0)
+    #2 absl::debian3::synchronization_internal::GraphCycles::GetId(void*) <null> (libabsl_graphcycles_internal.so.20220623+0x31d9) (BuildId: 1dae8c73ec771753731fe7dfaa32cc0fed4e69df)
+
+  Previous write of size 8 at 0x7ffff5ac3380 by main thread:
+    #0 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:98 (libtsan.so.2+0x8bbd0) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 memmove ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:96 (libtsan.so.2+0x8bbd0)
+    #2 absl::debian3::synchronization_internal::GraphCycles::GetId(void*) <null> (libabsl_graphcycles_internal.so.20220623+0x31d9) (BuildId: 1dae8c73ec771753731fe7dfaa32cc0fed4e69df)
+    #3 __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58 (libc.so.6+0x2a1c9) (BuildId: a4a7992a8e66555c8141ab2a08a8465ff6e0ea65)
+
+  Thread T3 'grpc_global_tim' (tid=7, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 grpc_core::Thread::Thread(char const*, void (*)(void*), void*, bool*, grpc_core::Thread::Options const&) <null> (libgpr.so.29+0xa691) (BuildId: 258c054520b330b2b4107bb22694e972099eba82)
+    #2 __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58 (libc.so.6+0x2a1c9) (BuildId: a4a7992a8e66555c8141ab2a08a8465ff6e0ea65)
+
+SUMMARY: ThreadSanitizer: data race ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_memintrinsics.inc:98 in memmove
+==================

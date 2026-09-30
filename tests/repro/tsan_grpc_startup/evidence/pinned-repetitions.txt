@@ -1,0 +1,7 @@
+fresh processes: 130
+clean: 130
+TSan reports: 0
+other failures: 0
+Each process started the standalone callback server, completed one unary RPC,
+and shut down cleanly. The first 30 are summarized in pinned-clean-run.log;
+100 additional fresh runs were recorded under /tmp/artc-tsan-pinned-repro-runs/.

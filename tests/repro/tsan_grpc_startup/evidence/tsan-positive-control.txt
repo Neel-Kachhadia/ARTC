@@ -1,0 +1,12 @@
+GCC TSan positive control
+=========================
+
+Source: ../positive_control.cc (intentional shared int increment after a
+std::barrier; no project code).
+Compiler: GCC 13.3.0
+Flags: -std=c++23 -O1 -g -fsanitize=thread -fno-omit-frame-pointer
+Runtime: TSAN_OPTIONS=halt_on_error=1:history_size=7
+Execution: setarch x86_64 --addr-no-randomize
+Expected outcome: one ThreadSanitizer data-race report and exit 66.
+Observed outcome: report detected, exit 66.
+Full report: tsan-positive-control-report.txt

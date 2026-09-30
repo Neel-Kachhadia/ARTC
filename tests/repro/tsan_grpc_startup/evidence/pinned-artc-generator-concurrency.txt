@@ -1,0 +1,19 @@
+ARTC open-loop generator through pinned TSan router
+===================================================
+TSAN_OPTIONS=halt_on_error=1:history_size=7
+Three TSan-instrumented Service-A processes used a 50ms Alarm delay behind a
+TSan-instrumented round-robin router. The load generator scheduled 200 calls
+at 100rps with max-inflight 64 and a 100ms issue-lag limit. The 10ms arrival
+interval overlaps the 50ms service delay; the observed latency p50 was 79,167us.
+
+Result: scheduled/issued/completed=200/200/200; errors=0; valid=true;
+generator_saturated=false; max issue lag=541us; response counts A1/A2/A3=
+67/67/66; all four server processes exited 0 after SIGTERM; TSan reports=0.
+
+A 300rps TSan pilot using a 20ms service delay completed 600/600 calls with no
+TSan report, but max issue lag reached 75,154us against its 50,000us limit.
+Its manifest correctly marked it generator_saturated=true and valid=false; it
+is retained as a saturated pilot, not counted as a pass.
+
+Complete process logs and both manifests are retained under
+/tmp/artc-pinned-tsan-generator-concurrency/.

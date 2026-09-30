@@ -1,0 +1,20 @@
+System Ubuntu shared-library instrumentation check:
+/lib/x86_64-linux-gnu/libabsl_graphcycles_internal.so.20220623: no __tsan_* references
+/lib/x86_64-linux-gnu/libgrpc.so.29: no __tsan_* references
+
+Pinned TSan-instrumented archive: build/pinned-tsan/_deps/grpc-build/third_party/abseil-cpp/absl/synchronization/libabsl_graphcycles_internal.a
+U __tsan_atomic32_compare_exchange_strong
+U __tsan_atomic32_exchange
+U __tsan_atomic32_load
+U __tsan_func_entry
+U __tsan_func_exit
+U __tsan_init
+U __tsan_mutex_destroy
+U __tsan_mutex_post_lock
+U __tsan_mutex_post_unlock
+U __tsan_mutex_pre_lock
+U __tsan_mutex_pre_unlock
+U __tsan_read1
+U __tsan_read4
+U __tsan_read8
+U __tsan_write1

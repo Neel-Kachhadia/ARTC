@@ -1,0 +1,76 @@
+Pinned-stack Phase 1 benchmark and matched runtime comparison
+=============================================================
+
+Source revision for both release binaries: 2df00293e1d0f677eb9260f292a912d329e5990f
+Both were GCC Release builds with -O3 -DNDEBUG. The preserved pre-pin binaries
+load Ubuntu shared gRPC/Abseil/Protobuf; the current pinned binaries statically
+link gRPC v1.84.0 / Abseil 20250512.1 / Protobuf 35.1.0.
+
+Matched settings: constant open loop, 1,000 requests/second, 10,000ms,
+max-inflight 512, 5,000us max issue lag, 5,000ms deadline, 10,000 samples.
+All six compared runs were valid, completed 10,000/10,000, and had zero errors.
+
+Path                         Stack       p50       p95       p99     loadgen CPU
+Router + Service A + B       system      594us     844us    1,065us  20.92%
+Router + Service A + B       pinned    1,217us   1,551us    1,736us  27.89%
+Service B direct             system      295us     514us      594us  17.27%
+Service B direct             pinned      547us     776us      872us  30.55%
+Service A -> Service B       system      538us     759us      982us  18.57%
+Service A -> Service B       pinned      899us   1,230us    1,419us  27.59%
+
+This localizes the added latency to the dependency/runtime path: the increase
+is present in a single unary Service B call and remains similar in the direct
+Service A-to-B path, without the selector. At the canonical router path, p99
+is 63% higher and load-generator CPU is 33% higher with the pinned stack.
+Throughput remains at the offered rate, and issue lag stayed below the
+5,000us invalid-run limit. No Phase 1 latency SLO sets a rejection threshold.
+The dependency update therefore trades measurable latency/CPU cost for
+reproducible, fully instrumented dependencies; the numbers are retained rather
+than normalized away.
+
+Canonical pinned-stack run: artifacts/runs/pinnedphase1-20260928-02/
+  healthy round-robin: p50/p95/p99 1,217/1,551/1,736us; 10,000/10,000 valid
+  A2 straggler:         p50/p95/p99 1,487/329,471/560,127us; valid
+  recovery:             p50/p95/p99 1,309/1,595/1,813us; 10,000/10,000 valid
+  A2 CPU/RSS sample:    91.54% / 54.18MiB
+  fault cleanup:        A1/A2/A3 netem=false
+
+One-hop/two-hop manifests are under artifacts/runs/rpcpathcompare-20260928/;
+the matched full-router system run is under artifacts/runs/systemcompare-20260928/.
+
+Matched process RSS sample
+--------------------------
+
+A second matched 10-second, 1,000-RPS full-router pair sampled process RSS
+inside the Compose containers at approximately 250ms intervals. Both runs
+completed 10,000/10,000 requests with zero errors and a valid generator
+schedule. The sample is a single run per stack; retain it as a memory check,
+not as a replacement for the canonical benchmark baseline.
+
+Run IDs:
+  system:  artifacts/runs/artcrssv3system20260928143038/runtime-rss/
+  pinned:  artifacts/runs/artcrssv3pinned20260928143116/runtime-rss/
+
+Path                         Stack       p50       p95       p99  gen CPU   issue-lag p99/max
+Router + Service A + B       system      670us     958us    1,188us 23.16%   175us / 3,745us
+Router + Service A + B       pinned      986us   1,326us    2,595us 32.01%    98us /   372us
+
+Peak process RSS (KiB; measured separately in each container):
+
+Process       system   pinned   change
+Service B      16,504   14,976   -1,528
+A1             16,568   15,928     -640
+A2             16,628   15,692     -936
+A3             16,500   16,040     -460
+Router         17,788   18,120     +332
+Load generator 16,816   16,592     -224
+
+The process RSS samples show no material resident-memory increase (largest
+increase: router +332 KiB, about 1.9%). Offered throughput remained 1,000 RPS;
+the maximum issue lag stayed below the 5,000us validity limit in both runs.
+Generator CPU and RPC latency increased on the pinned stack, consistent with
+the earlier matched run and direct one-hop/two-hop measurements. The pinned
+healthy canonical run recorded in the Phase 1 artifacts is the new reference
+for subsequent Phase 1 comparisons; no numeric latency tolerance is currently
+configured in the architecture gate, so this intentional dependency tradeoff
+is recorded here rather than hidden or assigned a fabricated threshold.

@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package repro.v1;
+
+service Probe {
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
+}

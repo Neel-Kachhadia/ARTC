@@ -1,0 +1,27 @@
+# Build outputs
+build/
+build-*/
+cmake-build-*/
+out/
+
+# Generated benchmark/runtime output
+artifacts/runs/
+artifacts/raw/
+
+# Generated dependencies
+_deps/
+*/_deps/
+
+# Compiler/generated files
+compile_commands.json
+CMakeFiles/
+CMakeCache.txt
+
+# Git internals
+.git/
+
+# Temporary/cache files
+.cache/
+__pycache__/
+*.log
+*.tmp

@@ -1,0 +1,20 @@
+Command: cmake --build build/debug --target artc_integration_tests -j2
+Exit status: 0
+
+Command: ./build/debug/artc_integration_tests
+Exit status: 0
+Result: 32/32 integration tests passed, including the four forced ordering
+tests and the seeded actual-manager event-sequence test.
+Execution: approved host-capable path; loopback is blocked in the sandbox.
+Log: artifacts/reviews/phase3-attemptmanager-current-integration.log
+
+Command: cmake --build build/phase2-tsan --target artc_integration_tests -j2
+Exit status: 0
+
+Command: setarch x86_64 -R env TSAN_OPTIONS='halt_on_error=1:second_deadlock_stack=1' ./build/phase2-tsan/artc_integration_tests --gtest_filter='AttemptManagerIntegrationTest.QueuedHedgeCallbackCannotStartAfterPrimaryCompletes:AttemptManagerIntegrationTest.ShutdownClosingFenceRejectsQueuedHedgeWithoutConsumingBudget:AttemptManagerIntegrationTest.ShutdownAfterHedgeCommitCancelsCommittedAttempt:AttemptManagerIntegrationTest.QueuedRetryCallbackCannotStartAfterCallerCancellation:AttemptManagerIntegrationTest.SeededManagerEventSequencesCheckBoundsAfterEveryEvent'
+Exit status: 0
+Result: 5/5 tests passed under TSan with no report.
+Log: artifacts/reviews/phase3-attemptmanager-current-tsan.log
+
+Command: git diff --check
+Exit status: 0

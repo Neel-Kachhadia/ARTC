@@ -1,0 +1,61 @@
+ARTC Phase 3 — independent review of deterministic AttemptManager tests
+
+Role: Claude Sonnet 5.5 High, implementation and test review. Review the
+current focused diff and the listed neighboring source. Do not redesign the
+Phase 3 architecture or repeat a generic architecture review.
+
+This increment adds a BUILD_TESTING-only control seam for the existing
+AttemptManager timer and dispatch paths, four forced timer/shutdown races, and
+a seeded sequence that drives the manager's actual timer closures while
+checking bounds after events. The production path still uses grpc::Alarm and
+steady_clock when no test control is configured.
+
+Control semantics in the current diff:
+- Timer keys identify manager, kind and generation. The driver preserves
+  cancelled timer closures so tests can deliver stale callbacks deliberately.
+- Timer-ready checkpoints pause before AttemptManager takes its mutex.
+- BeforeDispatchFence pauses under the manager mutex before taking the router
+  dispatch mutex.
+- InsideDispatchFence pauses after StartCall/attempt commitment while the
+  dispatch mutex remains held.
+- ShutdownFenceClosed signals after shutdown closes and releases the dispatch
+  mutex, before it requests stop.
+- The fake monotonic clock is shared by attempt/deadline/budget decisions.
+
+The most recent Sol Max audit found no source defect in the dispatch fence, but
+said the old seeded test did not force timer callback interleavings and checked
+invariants only after requests drained. Sol High recommended injecting the
+actual timer closures and pausing at both sides of the dispatch fence. The new
+tests were built around that recommendation.
+
+Evidence already run:
+- `cmake --build build/debug --target artc_integration_tests -j2`: exit 0.
+- Full `./build/debug/artc_integration_tests` through the host-capable path:
+  exit 0, 32/32 tests passed.
+- `cmake --build build/phase2-tsan --target artc_integration_tests -j2`:
+  exit 0.
+- Five new tests under `setarch x86_64 -R` and TSan: exit 0, 5/5 passed.
+- `git diff --check`: exit 0.
+- A sandboxed loopback run failed before test code at server bind with
+  `Operation not permitted`; the host-capable run passed.
+
+Please inspect for concrete issues in:
+1. C++ data races, callback/lambda lifetimes, object teardown, deadlocks, and
+   exception/failure cleanup in the test driver and test hooks.
+2. Whether the checkpoints truly force the intended ordering and whether
+   shutdown-before-commit versus commit-before-shutdown is asserted from actual
+   backend dispatch and budget accounting.
+3. Whether timer generation/cancellation behavior permits stale delivery
+   without hiding a production bug; compare with the real grpc::Alarm path.
+4. Whether the seeded test drives actual callbacks and checks useful invariants
+   after events, with a reproducible seed and meaningful event coverage.
+5. Whether the CMake macro and conditional AttemptRuntimeConfig member preserve
+   ABI/layout across all targets in BUILD_TESTING and disappear cleanly when
+   testing is disabled.
+6. Any missing edge case, maintainability cost, accidental production-path
+   behavior change, or redundant test abstraction in this increment.
+
+For every finding, give file/function, trigger, impact, severity, and the
+smallest useful verification or repair. Verify that a suspected issue is
+actually present in the current diff. State clearly if there is no blocking
+finding. Do not suggest unrelated Phase 4 work.

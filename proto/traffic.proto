@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package artc.v1;
+
+message WorkRequest {
+  uint64 request_id = 1;
+  uint32 work_units = 2;
+  uint32 payload_bytes = 3;
+  bool invoke_dependency = 4;
+}
+
+message WorkResponse {
+  uint64 request_id = 1;
+  string replica_id = 2;
+  string dependency_id = 3;
+  uint32 backend_attempt_count = 4;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ready = 1;
+  string component_id = 2;
+}
+
+service Traffic {
+  rpc Execute(WorkRequest) returns (WorkResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}

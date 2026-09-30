@@ -1,0 +1,11 @@
+Command: cmake --build build/debug --target artc_integration_tests -j4
+Exit status: 0
+
+Command: ./build/debug/artc_integration_tests
+Exit status: 0
+Result: 27/27 integration tests passed, including 22 AttemptManager tests.
+Execution: approved host-capable path because local gRPC loopback is blocked in
+the default sandbox.
+
+Command: git diff --check
+Exit status: 0

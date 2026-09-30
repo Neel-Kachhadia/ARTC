@@ -1,0 +1,17 @@
+ARTC active-request shutdown check under pinned TSan stack
+=========================================================
+Server: artc_lab_node service-a, 60,000,000us per work unit, loopback
+Client: artc_loadgen constant schedule, 1 request at 1rps, 10,000ms deadline
+Action: after readiness and 600ms with the request active, send SIGTERM
+TSAN_OPTIONS=halt_on_error=1:history_size=7
+
+Result:
+  server exit: 0
+  client exit: 2 (expected invalid benchmark because shutdown cancelled the RPC)
+  issued/completed/errors: 1/1/1
+  elapsed: 5,548ms (the configured server shutdown deadline is 5s)
+  TSan reports: 0
+
+The active RPC was cancelled during server shutdown, its client callback
+completed, Server::Wait returned, and the process exited. Full process logs and
+manifest are retained under /tmp/artc-pinned-tsan-active-shutdown/.

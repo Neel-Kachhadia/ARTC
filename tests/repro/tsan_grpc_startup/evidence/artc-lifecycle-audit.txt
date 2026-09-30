@@ -1,0 +1,53 @@
+ARTC gRPC lifecycle audit
+=========================
+
+Server and service ownership
+----------------------------
+start_server() registers the caller-owned service and returns the server.
+In the application and integration tests, service objects are declared before
+their server handles, so server destruction happens first. The application
+waits for Server::Wait() before leaving the service scope.
+
+Reactor ownership and completion
+-------------------------------
+OwnedServerReactor retains shared CompletionState and deletes itself in
+OnDone(). gRPC documents OnDone as the final reaction and permits reactor
+deletion there. OnCancel forwards cancellation to retained state. Finish uses
+an atomic compare/exchange so concurrent completion sources finish once.
+Service and router callbacks call StartCall() once after setting the request.
+
+Context, request, response, stub, and channel lifetime
+------------------------------------------------------
+Each client request owns ClientContext, request, and response in a shared
+DependencyRequest retained by its ClientUnaryReactor until OnDone().
+ServiceA retains its dependency stub and passes a shared reference to active
+call state. RouterCallState retains shared RouterService::State, which owns
+backend stubs and replica state. Server callbacks use their context and
+response only while completing the callback reactor.
+
+Alarm and cancellation
+----------------------
+Alarm objects are members of shared call state. Alarm Set/Cancel transitions
+are guarded by a mutex; callbacks capture weak state references. Cancellation
+uses ClientContext::TryCancel() for downstream calls and Alarm::Cancel() for
+scheduled work. The existing cancellation integration test passed under TSan.
+
+Process shutdown
+----------------
+The application blocks SIGINT/SIGTERM before gRPC objects are constructed. A
+joined jthread calls Server::Shutdown() with a five-second deadline; the main
+thread calls Server::Wait(), stops the signal thread, and joins it before
+destroying the server and service. The pinned TSan active-request check
+cancelled an Alarm-backed RPC during SIGTERM shutdown; the client completed,
+Server::Wait() returned, both processes exited as expected, and no TSan report
+occurred. See pinned-artc-shutdown.txt.
+
+Conclusion
+----------
+No ARTC callback, ownership, context, channel/stub, Alarm, or shutdown defect
+was found in this audit. The original smallest-test report occurs in
+ServerBuilder::BuildAndStart() before the Health RPC callback, client channel,
+or any ARTC reactor/Alarm is used. The independent reproducer and captured
+report are retained beside this audit.
+ARTC has no explicit grpc_init()/grpc_shutdown() call or global/static gRPC
+object whose construction/destruction is shared across application threads.

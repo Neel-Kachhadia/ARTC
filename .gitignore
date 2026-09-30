@@ -28,6 +28,7 @@ core.*
 
 # Generated benchmark data
 artifacts/raw/
+artifacts/runs/
 bench/results/local/
 
 # IDE
@@ -40,6 +41,9 @@ bench/results/local/
 *.tmp
 *.log
 .cache/
+
+# Curated TSan reproduction reports are versioned evidence, not temporary logs.
+!tests/repro/tsan_grpc_startup/evidence/*.log
 
 # OS
 .DS_Store

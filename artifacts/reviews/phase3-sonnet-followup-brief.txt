@@ -1,0 +1,47 @@
+Independent implementation follow-up: ARTC Phase 3 AttemptManager
+
+Role: Sonnet 5.5 High, implementation/test review only. Opus already reviewed
+the architecture; Sol High and Sol Max reviewed the bounded policy and race
+semantics. Do not redesign the subsystem or repeat their generic architecture
+questions.
+
+Review the current production implementation and integration tests, especially
+the recent repairs for the earlier review findings:
+- recent censored-latency aging and keeping censored observations out of Phase 2
+  service percentiles/deadline feasibility;
+- recovering replicas restricted to bounded probes;
+- deadline-requested backend cancellation counted as timeout while caller,
+  shutdown, and winner cancellation remain neutral;
+- live admission-gate pressure used for hedge suppression;
+- callback drain barrier signalled only after backend reactor shared owners are
+  released;
+- no-target/attempt-limit metrics and DEADLINE_EXCEEDED outcome preservation;
+- secondary selection not advancing the primary round-robin cursor;
+- production using the same hedge-delay policy helper as unit tests.
+
+The latest test changes add held-backend dispatch ordering, live-gate overload
+coverage with a deliberately stale published snapshot, round-robin isolation,
+deadline-vs-caller cancellation accounting, retry-budget denial for a
+configured DEADLINE_EXCEEDED retry, timer shutdown condition waits, and a seeded
+event sequence that now includes a real bounded retry and exact permit drain.
+
+Current evidence: `cmake --build build/debug --target artc_integration_tests
+-j4` exited 0; `./build/debug/artc_integration_tests` exited 0 with 27/27
+tests passing. The loopback command ran through the approved host-capable path.
+`git diff --check` exited 0.
+
+Please inspect specifically:
+1. whether the tests actually identify primary/hedge/retry dispatch order and
+   force their advertised outcomes;
+2. whether the test cleanup remains safe on assertion failures;
+3. whether deadline and caller-cancel tests distinguish client cancellation
+   from the router's own logical deadline;
+4. whether live overload and stale-snapshot coverage would fail against the old
+   published-snapshot implementation;
+5. any remaining state-machine, accounting, lifecycle, or C++ ownership flaw
+   visible in the touched implementation;
+6. whether the seeded scenario test proves useful properties rather than merely
+   exercising a predetermined script.
+
+Return only concrete findings, each with file/function, trigger, impact, and a
+minimal verification or repair. State clearly if you find no blocking issue.

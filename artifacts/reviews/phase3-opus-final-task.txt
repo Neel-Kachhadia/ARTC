@@ -1,0 +1,137 @@
+Principal architecture review request: ARTC Phase 3 bounded unary attempts
+
+Review the current Phase 3 design as implemented in the attached current source,
+focused diff, tests, and evidence. Give a principal-engineer judgment, not a
+rewrite. The project is still high-blast because the new layer owns the request
+completion boundary while managing multiple asynchronous gRPC client calls.
+
+Frozen Phase 2 contract
+- `RequestContext` carries caller and effective monotonic deadlines.
+- Phase 2 has one logical-request admission permit, health/latency snapshots,
+  replica leases, adaptive selection, AIMD route admission and bounded shedding.
+- The Phase 2 permit is one per logical request. Phase 3 keeps it until every
+  dispatched local backend reactor reaches `OnDone`; each dispatched attempt
+  owns one `ReplicaLease`. There is deliberately no second attempt-level
+  concurrency controller.
+- Phase 2 is frozen at `3abdf00`. In single-attempt policy mode, Phase 3 must
+  retain amplification 1.0 and the Phase 1/2 behavior.
+
+Current Phase 3 design (verify against source)
+- `MethodPolicy` is resolved by exact full RPC method. Unknown methods default
+  non-idempotent, with one primary and no speculative work. Automatic hedging
+  and retry are rejected for non-idempotent methods.
+- `AttemptManager` owns the logical request lifecycle, attempt records, deadline,
+  hedge and retry gRPC alarms, completion arbitration, budget decisions,
+  cancellation, response publication, and attempt accounting. A mutex protects
+  compound state; completion plans perform cancellation and gRPC effects after
+  leaving the manager lock. Success from the first callback taking the lock
+  while before deadline wins. Failure waits until the active attempt group has
+  drained; retry is a replacement attempt, never concurrent with an unresolved
+  attempt.
+- `OwnedServerReactor` retains the completion state. Each self-deleting
+  `BackendReactor` holds strong references to its manager and attempt through
+  `OnDone`; timers and the shutdown stop callback hold weak manager references.
+  A callback-drain counter is held until the backend reactor is destroyed.
+- Hard maximum is three total attempts and two active attempts. A logical
+  request may use one hedge and at most one retry. Each request can consume one
+  token from a route-wide `HedgeBudget` and one from a separate `RetryBudget`;
+  tokens are consumed at committed secondary dispatch and are not refunded.
+- Hedge delay uses the primary replica's bounded rolling p95; cold start uses
+  configured maximum delay. Hedge selection excludes the primary, uses a
+  separate selector path, and should not advance Phase 2's primary recovery
+  probe sequence. Cluster pressure and all-replica latency suppress hedges.
+- Retry default classification is `UNAVAILABLE`; additional statuses must be
+  explicitly configured. Exponential backoff is capped, jitter is injected from
+  a seeded generator, and deadline feasibility is rechecked when scheduling and
+  when the timer fires. Retries prefer an unused healthy target; same-target
+  fallback is explicit policy.
+- Router shutdown closes a dispatch gate, requests stop, terminalizes managers,
+  shuts down inbound gRPC, then waits up to five seconds for outbound callback
+  drain before final accounting. A timeout remains visible and returns failure.
+- Cancellation is best effort. The test backend has cancellation-aware and
+  cancellation-ignoring modes. Attempt completions after the logical winner
+  only account and release resources; they cannot publish another response.
+
+Prior independent review outcomes (advisory; verify current source)
+- Sol High selected the 2-active / 3-total bound, one centralized scheduler,
+  serial replacement retries, remaining-deadline checks, conservative status
+  classification, deterministic failure precedence, and separate route-wide
+  token budgets.
+- Sol Max reviewed race/lifetime paths and verified repairs for callback drain,
+  stop-token shutdown, stale clock sampling, cancellation classification,
+  borrowed server-context lifetime, late success accounting and budget/permit
+  ownership. The pinned gRPC 1.84 Alarm callback re-arm behavior was examined.
+- Prior Opus review found secondary-selection and recovery-probe coupling,
+  loser-latency censoring, wall-clock deadline checks, missing callback drain,
+  hedge dispatch fail-closed behavior and metric semantics issues. Repairs were
+  applied: secondary selection excludes all used replicas and avoids primary
+  selector state; loser cancellation is treated as censored lower-bound latency;
+  internal expiry is steady-clock based; shutdown drains callbacks; hedge-path
+  failure is fail-open. The current code and newer evidence supersede old review
+  packets.
+- Sonnet's independent implementation review found test identity, callback
+  barrier, server cleanup, random-seed coverage, late-success observation timing,
+  delay evidence, and metric-wait issues; accepted repairs are present in the
+  current source/tests.
+- One consequential decision awaiting this review is the short global
+  `dispatch_mutex`, which serializes dispatch commitment against shutdown. The
+  Sol note gives the lock order and rationale; judge if this boundary is worth
+  its hot-path serialization cost.
+
+Objective evidence
+- `bash lab/run_phase3_gates.sh`: exit 0. GCC Debug, GCC Release, and Clang each
+  passed 87 CTest cases; ASan/UBSan with leak detection passed 36 targeted cases;
+  TSan passed 38 targeted cases using the pinned host workaround. Docker/gRPC
+  scenarios, config rejection, artifact validation and cleanup passed.
+- Phase 1 regression passed the full canonical scenario set. The Phase 2
+  single-attempt regression had 200/200 goodput and amplification 1.0.
+- A2 straggler baseline p99 was 154,367 us. A 5 ms hedge delay reduced it to
+  9,367 us at amplification 1.333 and 1.11 seconds wasted attempt time for 450
+  logical requests. At 20/50 ms p99 was 23,695/53,951 us at the same
+  amplification. This is one lab fault model and is not a general delay claim.
+- With all replicas slowed, five total hedges were admitted from five tokens
+  over 300 requests (amplification 1.0167); overload denials were observed.
+- Transient `UNAVAILABLE`: 30 retries across 200 requests, amplification 1.15,
+  and 200 successes. Cluster-wide `UNAVAILABLE`: three retries across 200
+  requests from a three-token budget, amplification 1.015, zero success during
+  outage. Non-idempotent and short-deadline runs launched zero extra attempts.
+- Cancellation-aware and ignoring backends both received 67 loser hedges. Their
+  measured post-cancel work was 641 us versus 9.36 seconds; aggregate wasted
+  attempt time was about 0.84 seconds in both runs.
+- A bounded 60-second resource sample under actual hedge churn completed 6,000
+  requests with 130 hedges, amplification 1.0217, and no generator saturation.
+  Across 29 samples, router RSS first/last decile medians were 15,512/17,124
+  KiB; FDs 10/12; sockets 3/5; threads 21/21. The existing growth analyzer
+  passed. Detailed evidence is in
+  `artifacts/runs/phase3-resource-stability-hedge-20260930/phase2-soak/`.
+- At these sample counts p999 is not meaningful. CPU/RSS overhead was not
+  isolated as a production capacity claim. The current phase has no transport
+  cancellation guarantee beyond client best effort.
+
+Please judge these questions independently:
+1. Does one logical manager provide a clear, complete ownership boundary for
+   caller-visible response, per-attempt resources and timer lifetimes?
+2. Is completion arbitration correct for success/failure/deadline/caller
+   cancellation/shutdown races, including failure precedence after a hedge?
+3. Are the borrowed server context and response safe through terminalization,
+   callback drain and `OnDone` destruction?
+4. Is the dispatch-versus-shutdown boundary linearizable, and is the global
+   dispatch mutex justified at this stage?
+5. Does the logical admission permit semantics contain local backend concurrency
+   adequately? Are remote work and cancellation limitations clearly reflected?
+6. Are hedge/retry token buckets, attempt bounds and retry sequencing
+   mathematically enough to prevent local amplification storms?
+7. Do secondary target selection, all-replica suppression, deadlines and the
+   censor-aware health model interact safely with Phase 2 snapshots and probes?
+8. Are timer re-arm, cancel, destruction, shutdown and callback-drain lifetimes
+   coherent for pinned gRPC 1.84?
+9. Do failure-status semantics and metrics describe actual events without
+   overclaiming cancellation or wasted remote work?
+10. Are there missing invariants, material test gaps, or resource bounds that
+    could become expensive to fix later?
+
+Report only concrete, actionable findings with file/symbol references and a
+failure scenario. Separate release blockers from follow-up tradeoffs. For any
+testable claim, state the smallest objective check that would resolve it. Do
+not request a rewrite or repeat already-settled low-level reasoning unless the
+current source changes that conclusion.

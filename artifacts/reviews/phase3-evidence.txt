@@ -1,0 +1,48 @@
+Phase 3 final architecture-review evidence, collected 2026-09-30
+
+Repository
+- Branch: phase3/attempt-management; baseline: 3abdf00 (frozen Phase 2 endpoint).
+- Canonical command: `bash lab/run_phase3_gates.sh`.
+- Result: exit 0; `artifacts/runs/phase3_20260930_160802_724820/gate-status.txt` says `phase3_gates=pass`.
+- `git diff --check` passed in the gate.
+
+Build and test evidence
+- GCC Debug CTest: 87/87 passed (`build/debug/Testing/Temporary/LastTest.log`).
+- GCC Release CTest: 87/87 passed (`build/release/Testing/Temporary/LastTest.log`).
+- Clang CTest: 87/87 passed (`build/phase3-clang/Testing/Temporary/LastTest.log`).
+- Clang ASan/UBSan with leak detection: targeted 36/36 passed (`build/phase2-asan-ubsan/Testing/Temporary/LastTest.log`).
+- TSan: targeted 38/38 passed with `setarch $(uname -m) -R` (`build/phase2-tsan/Testing/Temporary/LastTest.log`).
+- The full gate also ran configuration rejection checks and Docker gRPC/load-generator scenarios; all assertions passed and compose cleanup completed.
+
+Phase 1 regression
+- Command: `ARTC_RUN_ID=phase1-regression-phase3-20260930 ARTC_BENCH_DURATION_MS=1000 ARTC_BENCH_RATE_RPS=100 bash lab/run_phase1_gates.sh`.
+- Result: exit 0; `artifacts/runs/phase1-regression-phase3-20260930/phase1-gates.txt` says `phase1_gates=pass`.
+- Four healthy routing policies, targeted A2 straggler/recovery, CPU saturation, pause/resume, kill/restart, three repeated startup cycles, and interrupted-fault cleanup ran. Fault cleanup proof reports no remaining A1/A2/A3 netem rules.
+- The isolated A2 run p99 was 2,893 us healthy, 739,839 us faulted, and 2,183 us after recovery. The recovery run returned to within 710 us of the healthy measurement. Each measured request had one attempt.
+
+Phase 2 reduced regression and healthy-path comparison
+- Phase 2 single-attempt config: 200/200 goodput; 200 primary attempts; amplification 1.0; no hedges or retries; p50/p95/p99 1,154/1,611/1,976 us.
+- Phase 3 enabled config: 200/200 goodput; 200 primary attempts; amplification 1.0; no hedges or retries; p50/p95/p99 1,111/1,508/1,772 us.
+- These short separate runs show no extra attempts in the healthy path. Their difference is not a controlled overhead estimate; Phase 3 timer/allocation overhead was not independently isolated. p999 is unavailable at these sample sizes.
+
+Hedge and overload experiments
+- Single A2 straggler, 450 logical requests, no hedge: p50/p95/p99 1,188/153,471/154,367 us; amplification 1.0; 450/450 goodput.
+- With 5 ms hedge delay: p50/p95/p99 1,196/8,391/9,367 us; 150 hedges; amplification 1.333; 150 loser cancellations; 1,112,183 us wasted attempt time; 450/450 goodput.
+- With 20 ms: p99 23,695 us, 150 hedges, amplification 1.333, wasted attempt time 3,380,195 us.
+- With 50 ms: p99 53,951 us, 150 hedges, amplification 1.333, wasted attempt time 7,882,416 us.
+- All replicas slow: 300 requests across four intervals; 5 total hedges from a 5-token budget, 45 budget denials, aggregate overload-denied observations, amplification 1.0167; 2 hedge wins. The next three measured intervals started no hedges after the tokens were spent.
+
+Retry, idempotency, deadline, and cancellation evidence
+- Transient UNAVAILABLE: 200/200 succeeded; 30 retry attempts and 30 retry wins; amplification 1.15; 30 retry tokens consumed.
+- Cluster-wide UNAVAILABLE: 200 logical requests, 3 retries from the 3-token budget, one budget denial, 199 retry decisions without another target; amplification 1.015; zero successes during the configured total outage.
+- Non-idempotent: 150/150 succeeded with zero hedge/retry attempts; amplification 1.0.
+- Short deadline: 50/50 completed with zero extra attempts and 50 hedge deadline denials.
+- Cancellation-aware backend: 67 loser hedges canceled; measured post-cancel backend work 641 us; wasted attempt time 842,208 us.
+- Cancellation-ignoring backend: same 67 loser hedges; measured post-cancel backend work 9,356,819 us; wasted attempt time 839,762 us. Client cancellation is best effort and does not imply remote work stopped.
+
+Race/resource limits and remaining measurement limits
+- Integration tests include simultaneous primary/hedge success, late loser completion, caller-cancel/completion races, timer-vs-shutdown cases, callback-drain lifetime, and seeded event sequences. The current CTest logs show all selected tests passed under GCC, Clang, ASan/UBSan/LSan, and TSan.
+- Hard policy bound: at most 3 total attempts, 2 active attempts, one hedge, and one retry; unknown methods default to non-idempotent. A request keeps one Phase 2 admission permit until every dispatched local backend reactor has reached OnDone.
+- Per-scenario Docker CPU/memory snapshots and service work summaries were captured. A bounded 60-second resource sample under actual hedge churn is recorded below; this is focused Phase 3 evidence, not the Phase 4 soak campaign.
+- Runtime values are bounded lab measurements, not production capacity claims. p999 is null/not meaningful at the observed sample counts.
+- A bounded 60-second resource sampler was run twice against the Phase 3 binary using `lab/run_phase2_soak.sh`. The first run exercised 6,000 healthy idempotent requests with no secondary attempts. The second used a 150 ms A2 straggler and 20 ms hedge delay: 6,000/6,000 goodput, 130 hedge starts/cancellations, amplification 1.0217, no generator saturation, and 600 controller samples with no dropped observations. Across 29 resource samples, router RSS first/last decile medians were 15,512/17,124 KiB (+1,612 KiB), FDs 10/12 (+2), sockets 3/5 (+2), and threads 21/21; Docker RSS fell 0.69 MiB and PID count was unchanged. The existing bounded-growth analyzer passed all thresholds. Artifacts: `artifacts/runs/phase3-resource-stability-20260930/phase2-soak/` and `artifacts/runs/phase3-resource-stability-hedge-20260930/phase2-soak/`.

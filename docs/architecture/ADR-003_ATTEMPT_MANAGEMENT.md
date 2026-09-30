@@ -96,10 +96,19 @@ that cost alongside backend attempt amplification. Cancellation remains
 best-effort across the RPC boundary; no client-side state can prove that a
 remote cancellation-ignoring handler stopped consuming CPU.
 
-The focused gate passed on 2026-09-30 (`bash lab/run_phase3_gates.sh`, run
-`phase3_20260930_160802_724820`). GCC Debug, GCC Release, and Clang each passed
-87 CTest cases; targeted ASan/UBSan/LSan passed 36 cases and targeted TSan
-passed 38. The Phase 1 regression also passed. In the 450-request A2 straggler
+The full Phase 3 gate passed on 2026-09-30 (`bash lab/run_phase3_gates.sh`, run
+`phase3_20260930_160802_724820`, based on implementation commit `43e42a8`). It
+ran the Phase 1 regression and the Docker runtime scenarios below. After adding
+deterministic callback-drain and dispatch-fence test controls, the final
+code-only gate passed at `396b7ba`: GCC Debug, GCC Release, and Clang each
+passed 93 CTest cases; targeted ASan/UBSan/LSan passed 42 and targeted TSan
+passed 44. The six directly affected callback, deadline, shutdown, and seeded
+race tests also passed in GCC Debug and under TSan. Logs are
+`artifacts/reviews/phase3-final-code-gate.log` and
+`artifacts/reviews/phase3-current-repair-tsan.log`. The test controls compile
+only into `artc_rpc_testing`; production builds use the standard steady clock
+and gRPC alarms. Runtime scenarios were not repeated after this test-only seam.
+The Phase 1 regression also passed. In the 450-request A2 straggler
 run, p99 fell from 154,367 us without hedging to 9,367 us at a 5 ms delay, with
 1.333 attempt amplification and 1.11 s aggregate wasted attempt time. Delays of
 20 ms and 50 ms produced p99 of 23,695 us and 53,951 us at the same

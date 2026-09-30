@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 
 
@@ -45,7 +46,91 @@ def load_run(path: Path, expect_saturated: bool = False,
         raise ValueError(f"{path}: request path invariant violation was observed")
     attempts = manifest.get("backend_attempts")
     issued = manifest.get("issued")
-    if attempts is not None and issued and attempts / issued > 1.0000001:
+    phase3_fields = (
+        "attempt_metadata_version",
+        "phase3_attempt_metadata_observed",
+        "phase3_admitted_metadata_observed",
+        "admitted_without_attempts",
+        "primary_attempts",
+        "hedge_attempts",
+        "retry_attempts",
+        "cancelled_attempts",
+        "min_admitted_attempts_per_request",
+        "max_admitted_attempts_per_request",
+        "attempt_amplification_per_admitted",
+        "winning_attempt_kinds",
+    )
+    has_phase3_metadata = any(key in manifest for key in phase3_fields)
+    if has_phase3_metadata:
+        if manifest.get("attempt_metadata_version") != 3:
+            raise ValueError(f"{path}: incomplete or unsupported Phase 3 attempt metadata")
+        integer_fields = (
+            "backend_attempts",
+            "attempt_metadata_observed",
+            "phase3_attempt_metadata_observed",
+            "phase3_admitted_metadata_observed",
+            "admitted_without_attempts",
+            "primary_attempts",
+            "hedge_attempts",
+            "retry_attempts",
+            "cancelled_attempts",
+            "issued",
+            "admitted",
+            "rejected",
+            "max_admitted_attempts_per_request",
+        )
+        for key in integer_fields:
+            if type(manifest.get(key)) is not int or manifest[key] < 0:
+                raise ValueError(f"{path}: Phase 3 field {key} must be a non-negative integer")
+        if manifest["attempt_metadata_observed"] != issued:
+            raise ValueError(f"{path}: one or more calls lack backend-attempt metadata")
+        if manifest["phase3_attempt_metadata_observed"] != manifest["admitted"]:
+            raise ValueError(f"{path}: Phase 3 kind metadata does not cover every admitted request")
+        if manifest["phase3_admitted_metadata_observed"] != manifest["admitted"]:
+            raise ValueError(f"{path}: Phase 3 metadata does not cover every admitted request")
+        if manifest["admitted_without_attempts"] > manifest["admitted"]:
+            raise ValueError(f"{path}: no-dispatch logical requests exceed admitted requests")
+        status_counts = manifest.get("status_code_counts", {})
+        if manifest["admitted_without_attempts"] > (
+                status_counts.get("1", 0) + status_counts.get("4", 0)):
+            raise ValueError(f"{path}: no-dispatch requests need cancellation or deadline status")
+        classified_attempts = (manifest["primary_attempts"] +
+                               manifest["hedge_attempts"] +
+                               manifest["retry_attempts"])
+        if classified_attempts != attempts:
+            raise ValueError(f"{path}: attempt categories do not sum to backend attempts")
+        if manifest["cancelled_attempts"] > attempts:
+            raise ValueError(f"{path}: cancellations exceed backend attempts")
+        attempt_limit = 3 * manifest["admitted"]
+        if attempts > attempt_limit:
+            raise ValueError(f"{path}: backend attempts exceed three per admitted request")
+        minimum = manifest.get("min_admitted_attempts_per_request")
+        maximum = manifest["max_admitted_attempts_per_request"]
+        if manifest["admitted"] == 0:
+            if minimum is not None or maximum != 0 or attempts != 0:
+                raise ValueError(f"{path}: attempt bounds must be empty when no requests were admitted")
+            if manifest.get("attempt_amplification_per_admitted") is not None:
+                raise ValueError(f"{path}: amplification must be null when no requests were admitted")
+        else:
+            if type(minimum) is not int or not 0 <= minimum <= maximum <= 3:
+                raise ValueError(f"{path}: per-request attempts must be between zero and three")
+            if (minimum == 0) != (manifest["admitted_without_attempts"] > 0):
+                raise ValueError(f"{path}: zero-attempt admissions disagree with per-request bounds")
+            amplification = manifest.get("attempt_amplification_per_admitted")
+            expected_amplification = attempts / manifest["admitted"]
+            if type(amplification) not in (int, float) or not math.isfinite(amplification) or \
+                    not math.isclose(amplification, expected_amplification,
+                                     rel_tol=1e-7, abs_tol=1e-9):
+                raise ValueError(f"{path}: admitted-request amplification is inconsistent")
+        winners = manifest.get("winning_attempt_kinds")
+        if not isinstance(winners, dict) or any(
+                key not in ("primary", "hedge", "retry") or type(count) is not int or count < 0
+                for key, count in winners.items()):
+            raise ValueError(f"{path}: winning attempt kinds are malformed")
+        if sum(winners.values()) > manifest["admitted"]:
+            raise ValueError(f"{path}: winning attempt count exceeds admitted requests")
+    elif attempts is not None and issued and attempts / issued > 1.0000001:
+        # Preserve the Phase 2 one-primary limit when no Phase 3 metadata is present.
         raise ValueError(f"{path}: backend attempt amplification exceeds one")
     if not expect_saturated and not allow_uninstrumented:
         if manifest.get("attempt_metadata_observed") is not None and \
@@ -81,6 +166,45 @@ def compare(paths: list[Path], min_increase_us: int, max_recovery_delta_us: int)
     print(f"fault_increase_us={increase} recovery_delta_us={recovery_delta} A2_reintegrated=true")
 
 
+def compare_hedge(paths: list[Path]) -> None:
+    unhedged, hedged = [load_run(path, allow_errors=True) for path in paths]
+    for run in (unhedged, hedged):
+        if run.get("attempt_metadata_version") != 3:
+            raise ValueError("hedge comparison requires Phase 3 attempt metadata")
+    before = unhedged["latency_us"]
+    after = hedged["latency_us"]
+    if before.get("p99_us") is None or after.get("p99_us") is None:
+        raise ValueError("hedge comparison requires enough samples to estimate p99")
+    admitted_before = unhedged["admitted"]
+    admitted_after = hedged["admitted"]
+    hedge_rate = (hedged["hedge_attempts"] / admitted_after
+                  if admitted_after else 0.0)
+    cancelled_loser_rate = (hedged["cancelled_attempts"] / admitted_after
+                            if admitted_after else 0.0)
+    summary = paths[1] / "router-summary.txt"
+    wasted_time_us = None
+    if summary.exists():
+        for line in summary.read_text(encoding="utf-8").splitlines():
+            if line.startswith("ARTC_ATTEMPT_SUMMARY "):
+                values = dict(part.split("=", 1) for part in line.split()[1:]
+                              if "=" in part)
+                wasted_time_us = int(values["wasted_attempt_time_us"])
+                break
+    print(f"unhedged_p50_us={before.get('p50_us')} "
+          f"unhedged_p95_us={before.get('p95_us')} "
+          f"unhedged_p99_us={before['p99_us']} "
+          f"unhedged_amplification={unhedged['attempt_amplification_per_admitted']}")
+    print(f"hedged_p50_us={after.get('p50_us')} "
+          f"hedged_p95_us={after.get('p95_us')} "
+          f"hedged_p99_us={after['p99_us']} "
+          f"hedge_rate={hedge_rate} "
+          f"hedged_amplification={hedged['attempt_amplification_per_admitted']} "
+          f"cancelled_loser_rate={cancelled_loser_rate} "
+          f"wasted_attempt_time_us={wasted_time_us if wasted_time_us is not None else 'unavailable'} "
+          f"process_cpu_percent={hedged.get('process_cpu_percent')} "
+          f"p99_change_us={after['p99_us'] - before['p99_us']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--expect-saturated", action="store_true")
@@ -89,13 +213,18 @@ def main() -> int:
     parser.add_argument("--allow-uninstrumented", action="store_true",
                         help="allow a direct backend target without router admission metadata")
     parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--compare-hedge", action="store_true")
     parser.add_argument("--min-p99-increase-us", type=int, default=50_000)
     parser.add_argument("--max-recovery-delta-us", type=int, default=20_000)
     parser.add_argument("paths", nargs="+")
     args = parser.parse_args()
     try:
         paths = [Path(value) for value in args.paths]
-        if args.compare:
+        if args.compare_hedge:
+            if len(paths) != 2 or args.expect_saturated:
+                raise ValueError("--compare-hedge requires unhedged and hedged runs")
+            compare_hedge(paths)
+        elif args.compare:
             if len(paths) != 3 or args.expect_saturated:
                 raise ValueError("--compare requires healthy, faulted, and recovery paths")
             compare(paths, args.min_p99_increase_us, args.max_recovery_delta_us)

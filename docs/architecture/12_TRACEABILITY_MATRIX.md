@@ -22,6 +22,22 @@ This file prevents ARTC from becoming a pile of disconnected tests. Every critic
 | Honest latency measurement | benchmark rules | scheduled/actual/completion | generator tests + open-loop validation | raw histograms + manifest |
 | No hidden load-shed win | reporting rule | goodput/rejections/errors | benchmark analysis checks | latency always adjacent to goodput/rejection |
 
+## Phase 3 attempt-management matrix
+
+| Requirement | Invariant(s) | Implementation | Verification | Metric / artifact | Interview question |
+|---|---|---|---|---|---|
+| Explicit idempotency and conservative unknown-method default | I-SAFE-001..003 | `MethodPolicy`, exact RPC-method map | `AttemptPolicyTest`, non-idempotent integration | per-run manifest attempt kinds | Why can’t the router infer idempotency from a method name? |
+| One logical completion across backend attempts | I-REQ-001..003, I-ATT-005, I-ATT-008 | `AttemptManager` mutex terminal transition and server reactor | simultaneous completion, caller cancel, deadline, shutdown, seeded sequences | logical terminal count and winner trailers | What happens when primary and hedge finish together? |
+| Bound total and active attempts | I-ATT-001, I-ATT-002, I-ATT-007 | runtime and method limits, fixed three-slot attempt array | `P+H+R` boundary and active-cap tests | primary/hedge/retry counts and amplification | What is the maximum amplification per admitted request? |
+| Distinct-target, overload-aware hedging | I-ATT-003, I-BUD-002, I-BUD-007 | healthy-only secondary selector, target exclusion, and Phase 2 overload signals | probe-sequence unit test, distinct-target integration, all-replicas-slow integration, hedge-delay sweep | hedge rate, denial counters, latency estimates, p99 and service logs | Why can hedging worsen a cluster-wide slowdown? |
+| Bounded, classified retries with backoff and jitter | I-BUD-001, I-BUD-005, I-BUD-007 | explicit status policy, all-used-target exclusion, capped exponential delay, seeded jitter | policy/deadline tests, distinct replacement target, retryable failure, budget denial and retry storm | retry counts, target diagnostics, budget state, interval manifests | How do backoff, jitter and the retry budget contain a storm? |
+| Deadline and cancellation propagation | I-REQ-005..007, I-ATT-006, I-ATT-011 | monotonic request budget and manager-owned gRPC alarms | short-deadline integration, pending hedge/retry shutdown tests | zero-dispatch admissions and cancellation trailers | What changes when a backend ignores cancellation? |
+| Logical admission permit and per-attempt replica leases | I-REQ-008..010, I-ADM-002, I-ATT-010 | one Phase 2 permit per logical request; a lease per attempt | concurrent-attempt tests, permit-drain checks and TSan | active attempts, terminal drain and controller counts | Do Phase 2 permits count requests or attempts? |
+| Attempt amplification and wasted work | I-TEL-004, I-BUD-006 | attempt snapshots, censored-latency lower bounds, gRPC trailers and low-cardinality shutdown exposition | selector lower-bound unit test, loadgen manifest validator, cancellation-aware/ignoring backend | amplification, cancellation requests, censored attempts and aggregate loser time | What tail improvement justified the extra backend work? |
+| Shutdown with outstanding attempts and timers | I-RES-002, I-RES-006, I-REQ-010 | dispatch gate, stop source, weak timer callbacks, reactor-owned attempt lifetimes, callback drain CV | callback-drain integration, pending hedge/retry timer tests and targeted TSan | pending backend callbacks and final attempt summary | How does shutdown prevent a late timer from creating work? |
+
+Focused Phase 3 run directories are written under `artifacts/runs/<run-id>/` and remain ignored by Git. The canonical entry point is `lab/run_phase3_gates.sh`; `--code-only` runs build, test and sanitizer gates without Docker scenarios.
+
 ## Fault-model traceability
 
 Before release, every fault ID from `../failures/04_FAILURE_MODEL_AND_FAULT_LAB.md` must appear in a generated or maintained coverage table:

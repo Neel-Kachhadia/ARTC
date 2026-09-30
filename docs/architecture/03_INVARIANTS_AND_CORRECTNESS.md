@@ -37,6 +37,11 @@ I-ATT-003  A normal hedge target differs from its primary target.
 I-ATT-004  A terminal attempt never re-enters IN_FLIGHT.
 I-ATT-005  Loser cancellation cannot produce a second logical completion.
 I-ATT-006  Retry scheduling cannot survive logical completion.
+I-ATT-007  A request starts no more than three attempts and no more than two concurrently.
+I-ATT-008  Only AttemptManager changes an accepted request to its terminal state.
+I-ATT-009  A hedge targets a different replica from the primary.
+I-ATT-010  Every dispatched attempt owns and releases exactly one replica lease.
+I-ATT-011  Attempt creation rechecks the current remaining logical deadline.
 ```
 
 ## 4. Idempotency and side-effect invariants
@@ -58,6 +63,8 @@ I-BUD-003  Every token consumption is attributable to an attempt.
 I-BUD-004  Budget refill is bounded and monotonic according to configured policy.
 I-BUD-005  Retry and hedge accounting remain independent.
 I-BUD-006  Amplification cannot exceed the maximum implied by attempt and budget limits.
+I-BUD-007  A committed hedge or retry consumes one matching route-wide budget token.
+I-BUD-008  Hedge and retry tokens are independent and never become negative.
 ```
 
 ## 6. Admission invariants

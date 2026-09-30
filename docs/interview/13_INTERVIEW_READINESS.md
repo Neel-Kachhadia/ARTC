@@ -133,6 +133,23 @@ Hurts: widespread dependency failure.
 
 Containment: idempotency + bounded attempts + retry budget + backoff + jitter + deadline.
 
+Phase 3 implementation facts to explain:
+
+- `MethodPolicy` is looked up by the exact gRPC method. Unknown methods default
+  to non-idempotent, with hedging and retry disabled and one total attempt.
+- Automatic duplicates require explicit idempotency. Retry defaults to
+  `UNAVAILABLE`; method-specific retryable statuses are validated.
+- The hard runtime ceiling is three total attempts and two active attempts.
+  Only one hedge is allowed, and a retry waits for the current attempt group to
+  fail.
+- The logical Phase 2 admission permit covers the request and remains held
+  until every local backend callback drains. Each attempt holds its own replica
+  lease. This avoids a second concurrency controller while bounding local
+  attempt concurrency by the request limit times two.
+- Cancellation stops timers and cancels active calls best effort. An ignoring
+  backend can keep working after the caller receives its one result; the lab
+  reports that wasted work separately.
+
 ### Adaptive admission
 
 Why: keep queueing near useful capacity.

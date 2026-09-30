@@ -105,7 +105,38 @@ Options parse_options(int argc, char** argv) {
       std::pair{"ARTC_HEALTH_RECOVERY_COOLDOWN_MS", "500"},
       std::pair{"ARTC_HEALTH_DEGRADED_RATIO", "2.0"},
       std::pair{"ARTC_HEALTH_RECOVERED_RATIO", "1.5"},
-      std::pair{"ARTC_RECOVERY_PROBE_PERIOD", "16"}};
+      std::pair{"ARTC_RECOVERY_PROBE_PERIOD", "16"},
+      std::pair{"ARTC_ATTEMPT_MAX_TOTAL", "3"},
+      std::pair{"ARTC_ATTEMPT_MAX_ACTIVE", "2"},
+      std::pair{"ARTC_ATTEMPT_JITTER_SEED", "1"},
+      std::pair{"ARTC_ATTEMPT_MINIMUM_BUDGET_US", "1000"},
+      std::pair{"ARTC_HEDGE_BUDGET_CAPACITY", "10"},
+      std::pair{"ARTC_HEDGE_BUDGET_REFILL_PER_SECOND", "1.0"},
+      std::pair{"ARTC_RETRY_BUDGET_CAPACITY", "10"},
+      std::pair{"ARTC_RETRY_BUDGET_REFILL_PER_SECOND", "1.0"},
+      std::pair{"ARTC_EXECUTE_IDEMPOTENCY", "non_idempotent"},
+      std::pair{"ARTC_EXECUTE_HEDGING_ENABLED", "false"},
+      std::pair{"ARTC_EXECUTE_RETRY_ENABLED", "false"},
+      std::pair{"ARTC_EXECUTE_ALLOW_SAME_REPLICA_RETRY", "false"},
+      std::pair{"ARTC_EXECUTE_MAX_TOTAL_ATTEMPTS", "1"},
+      std::pair{"ARTC_EXECUTE_MAX_RETRIES", "0"},
+      std::pair{"ARTC_EXECUTE_HEDGE_DELAY_MIN_US", "10000"},
+      std::pair{"ARTC_EXECUTE_HEDGE_DELAY_MAX_US", "100000"},
+      std::pair{"ARTC_EXECUTE_RETRY_BACKOFF_BASE_MS", "10"},
+      std::pair{"ARTC_EXECUTE_RETRY_BACKOFF_MAX_MS", "100"},
+      std::pair{"ARTC_EXECUTE_RETRY_JITTER_MAX_MS", "10"},
+      std::pair{"ARTC_EXECUTE_RETRYABLE_STATUSES", "UNAVAILABLE"},
+      std::pair{"ARTC_SERVICE_A_UNAVAILABLE_FIRST_N", "0"},
+      std::pair{"ARTC_SERVICE_A_HONOR_CANCELLATION", "true"},
+      std::pair{"ARTC_SERVICE_A1_DELAY_US", "0"},
+      std::pair{"ARTC_SERVICE_A2_DELAY_US", "0"},
+      std::pair{"ARTC_SERVICE_A3_DELAY_US", "0"},
+      std::pair{"ARTC_SERVICE_A1_UNAVAILABLE_FIRST_N", "0"},
+      std::pair{"ARTC_SERVICE_A2_UNAVAILABLE_FIRST_N", "0"},
+      std::pair{"ARTC_SERVICE_A3_UNAVAILABLE_FIRST_N", "0"},
+      std::pair{"ARTC_SERVICE_A1_HONOR_CANCELLATION", "true"},
+      std::pair{"ARTC_SERVICE_A2_HONOR_CANCELLATION", "true"},
+      std::pair{"ARTC_SERVICE_A3_HONOR_CANCELLATION", "true"}};
   for (const auto& [name, fallback] : parameters) {
     const char* value = std::getenv(name);
     options.controller_parameters.emplace(name, value == nullptr ? fallback : value);
@@ -291,6 +322,7 @@ struct RunState {
   std::map<std::string, std::uint64_t> by_replica;
   std::map<std::string, std::uint64_t> admission_results;
   std::map<std::string, std::uint64_t> statuses;
+  std::map<std::string, std::uint64_t> winning_attempt_kinds;
   std::vector<std::pair<std::uint64_t, std::string>> decision_samples;
   std::uint64_t issued{0};
   std::uint64_t completed{0};
@@ -301,6 +333,15 @@ struct RunState {
   std::uint64_t deadline_misses{0};
   std::uint64_t backend_attempts{0};
   std::uint64_t attempt_metadata_observed{0};
+  std::uint64_t phase3_attempt_metadata_observed{0};
+  std::uint64_t phase3_admitted_metadata_observed{0};
+  std::uint64_t primary_attempts{0};
+  std::uint64_t hedge_attempts{0};
+  std::uint64_t retry_attempts{0};
+  std::uint64_t cancelled_attempts{0};
+  std::uint64_t admitted_without_attempts{0};
+  std::uint64_t min_admitted_attempts_per_request{UINT64_MAX};
+  std::uint64_t max_admitted_attempts_per_request{0};
   std::uint64_t invariant_violations{0};
   std::uint64_t decision_samples_dropped{0};
   std::uint64_t max_issue_lag_us{0};
@@ -356,6 +397,25 @@ void RunState::complete(ClientCall* call, const grpc::Status& status,
   std::string selected_replica;
   std::string decision;
   std::optional<std::uint64_t> attempts;
+  std::optional<std::uint64_t> primary_attempt_count;
+  std::optional<std::uint64_t> hedge_attempt_count;
+  std::optional<std::uint64_t> retry_attempt_count;
+  std::optional<std::uint64_t> cancelled_attempt_count;
+  std::optional<std::string> winning_attempt_kind;
+  const auto parse_metadata_count = [this](std::string_view value,
+                                           std::optional<std::uint64_t>* destination) {
+    if (*destination) {
+      ++invariant_violations;
+      return;
+    }
+    std::uint64_t parsed = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (error == std::errc{} && end == value.data() + value.size()) {
+      *destination = parsed;
+    } else {
+      ++invariant_violations;
+    }
+  };
   for (const auto& [key_ref, value_ref] : metadata) {
     const std::string_view key(key_ref.data(), key_ref.size());
     const std::string value(value_ref.data(), value_ref.size());
@@ -363,27 +423,96 @@ void RunState::complete(ClientCall* call, const grpc::Status& status,
       if (!admission.empty()) ++invariant_violations;
       admission = value;
     } else if (key == "artc-backend-attempts") {
-      if (attempts) {
-        ++invariant_violations;
-      } else {
-        std::uint64_t parsed = 0;
-        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-        if (error == std::errc{} && end == value.data() + value.size()) attempts = parsed;
-        else ++invariant_violations;
-      }
+      parse_metadata_count(value, &attempts);
+    } else if (key == "artc-primary-attempts") {
+      parse_metadata_count(value, &primary_attempt_count);
+    } else if (key == "artc-hedge-attempts") {
+      parse_metadata_count(value, &hedge_attempt_count);
+    } else if (key == "artc-retry-attempts") {
+      parse_metadata_count(value, &retry_attempt_count);
+    } else if (key == "artc-cancelled-attempts") {
+      parse_metadata_count(value, &cancelled_attempt_count);
+    } else if (key == "artc-winning-attempt-kind") {
+      if (winning_attempt_kind) ++invariant_violations;
+      else winning_attempt_kind = value;
     } else if (key == "artc-selected-replica") {
       selected_replica = value;
     } else if (key == "artc-decision") {
       decision = value;
     }
   }
+  const bool any_phase3_counts = primary_attempt_count || hedge_attempt_count ||
+                                 retry_attempt_count || cancelled_attempt_count;
+  const bool complete_phase3_counts = primary_attempt_count && hedge_attempt_count &&
+                                      retry_attempt_count && cancelled_attempt_count;
+  if (any_phase3_counts && !complete_phase3_counts) ++invariant_violations;
+  if (complete_phase3_counts) {
+    ++phase3_attempt_metadata_observed;
+    const bool counts_bounded = *primary_attempt_count <= 3 &&
+                                *hedge_attempt_count <= 3 &&
+                                *retry_attempt_count <= 3;
+    if (!counts_bounded) ++invariant_violations;
+    const std::uint64_t classified_attempts = counts_bounded
+        ? *primary_attempt_count + *hedge_attempt_count + *retry_attempt_count
+        : 0;
+    if (counts_bounded && (!attempts || classified_attempts != *attempts ||
+                           classified_attempts > 3)) {
+      ++invariant_violations;
+    }
+    primary_attempts += *primary_attempt_count;
+    hedge_attempts += *hedge_attempt_count;
+    retry_attempts += *retry_attempt_count;
+    if (!attempts || *cancelled_attempt_count > *attempts) ++invariant_violations;
+    cancelled_attempts += *cancelled_attempt_count;
+  }
+  if (winning_attempt_kind) {
+    if (*winning_attempt_kind != "primary" && *winning_attempt_kind != "hedge" &&
+        *winning_attempt_kind != "retry") {
+      ++invariant_violations;
+    } else {
+      ++winning_attempt_kinds[*winning_attempt_kind];
+    }
+  }
   if (!admission.empty()) {
     ++admission_results[admission];
     if (admission == "ADMITTED") {
-      if (attempts && *attempts > 1) ++invariant_violations;
+      if (complete_phase3_counts) {
+        const bool no_dispatch_terminal =
+            status.error_code() == grpc::StatusCode::CANCELLED ||
+            status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED;
+        const bool attempts_valid = attempts && *attempts <= 3 &&
+            ((*attempts == 0 && no_dispatch_terminal &&
+              *primary_attempt_count == 0 && *hedge_attempt_count == 0 &&
+              *retry_attempt_count == 0) ||
+             (*attempts > 0 && *primary_attempt_count == 1));
+        if (!attempts_valid) {
+          ++invariant_violations;
+        } else {
+          ++phase3_admitted_metadata_observed;
+          if (*attempts == 0) ++admitted_without_attempts;
+          min_admitted_attempts_per_request =
+              std::min(min_admitted_attempts_per_request, *attempts);
+          max_admitted_attempts_per_request =
+              std::max(max_admitted_attempts_per_request, *attempts);
+        }
+        if (status.ok() && !winning_attempt_kind) ++invariant_violations;
+        if (winning_attempt_kind &&
+            ((*winning_attempt_kind == "primary" && *primary_attempt_count == 0) ||
+             (*winning_attempt_kind == "hedge" && *hedge_attempt_count == 0) ||
+             (*winning_attempt_kind == "retry" && *retry_attempt_count == 0))) {
+          ++invariant_violations;
+        }
+      } else if (attempts && *attempts > 1) {
+        ++invariant_violations;
+      }
     } else if (admission.starts_with("REJECT_")) {
       ++rejected;
       if (attempts && *attempts != 0) ++invariant_violations;
+      if (complete_phase3_counts &&
+          (*primary_attempt_count != 0 || *hedge_attempt_count != 0 ||
+           *retry_attempt_count != 0)) {
+        ++invariant_violations;
+      }
     }
     if (!attempts) ++invariant_violations;
   }
@@ -423,6 +552,33 @@ void RunState::complete(ClientCall* call, const grpc::Status& status,
   changed.notify_all();
 }
 
+std::uint64_t admitted_request_count(const RunState& state) {
+  const auto admitted = state.admission_results.find("ADMITTED");
+  return admitted == state.admission_results.end() ? 0 : admitted->second;
+}
+
+bool attempt_accounting_valid(const RunState& state) {
+  if (state.phase3_attempt_metadata_observed == 0) {
+    // Preserve Phase 2's single-primary invariant for legacy trailers.
+    return state.backend_attempts <= state.issued;
+  }
+  if (state.phase3_attempt_metadata_observed != admitted_request_count(state) ||
+      state.attempt_metadata_observed != state.issued ||
+      state.phase3_admitted_metadata_observed != admitted_request_count(state)) {
+    return false;
+  }
+  const auto admitted = admitted_request_count(state);
+  if (admitted > UINT64_MAX / 3) return false;
+  const auto attempt_limit = 3 * admitted;
+  if (state.backend_attempts > attempt_limit ||
+      state.primary_attempts > state.backend_attempts) {
+    return false;
+  }
+  const auto after_primary = state.backend_attempts - state.primary_attempts;
+  if (state.hedge_attempts > after_primary) return false;
+  return state.retry_attempts == after_primary - state.hedge_attempts;
+}
+
 void write_artifacts(const Options& options, const std::vector<std::chrono::nanoseconds>& arrivals,
                      std::uint64_t started_unix_ms, std::uint64_t elapsed_wall_ms,
                      double process_cpu_seconds, const RunState& state) {
@@ -453,7 +609,7 @@ void write_artifacts(const Options& options, const std::vector<std::chrono::nano
                                  state.invariant_violations == 0 &&
                                  state.issued == arrivals.size() &&
                                  state.completed == state.issued &&
-                                 state.backend_attempts <= state.issued;
+                                 attempt_accounting_valid(state);
   const bool valid = measurement_valid && (options.allow_errors || state.errors == 0);
   const double offered_rps = static_cast<double>(arrivals.size()) /
                              std::chrono::duration<double>(options.duration).count();
@@ -461,8 +617,7 @@ void write_artifacts(const Options& options, const std::vector<std::chrono::nano
   const auto count_rps = [duration_seconds](std::uint64_t count) {
     return static_cast<double>(count) / duration_seconds;
   };
-  const auto admitted = state.admission_results.find("ADMITTED");
-  const auto admitted_count = admitted == state.admission_results.end() ? 0 : admitted->second;
+  const auto admitted_count = admitted_request_count(state);
   const double amplification = state.issued == 0
                                    ? 0.0
                                    : static_cast<double>(state.backend_attempts) /
@@ -504,8 +659,36 @@ void write_artifacts(const Options& options, const std::vector<std::chrono::nano
            << ",\n\"errors\":" << state.errors
            << ",\n\"backend_attempts\":" << state.backend_attempts
            << ",\n\"attempt_metadata_observed\":" << state.attempt_metadata_observed
-           << ",\n\"attempt_amplification\":" << amplification
-           << ",\n\"invariant_violations\":" << state.invariant_violations
+           << ",\n\"attempt_amplification\":" << amplification;
+  if (state.phase3_attempt_metadata_observed != 0) {
+    manifest << ",\n\"attempt_metadata_version\":3"
+             << ",\n\"phase3_attempt_metadata_observed\":"
+             << state.phase3_attempt_metadata_observed
+             << ",\n\"phase3_admitted_metadata_observed\":"
+             << state.phase3_admitted_metadata_observed
+             << ",\n\"admitted_without_attempts\":"
+             << state.admitted_without_attempts
+             << ",\n\"primary_attempts\":" << state.primary_attempts
+             << ",\n\"hedge_attempts\":" << state.hedge_attempts
+             << ",\n\"retry_attempts\":" << state.retry_attempts
+             << ",\n\"cancelled_attempts\":" << state.cancelled_attempts
+             << ",\n\"min_admitted_attempts_per_request\":";
+    if (admitted_count == 0) manifest << "null";
+    else manifest << state.min_admitted_attempts_per_request;
+    manifest
+             << ",\n\"max_admitted_attempts_per_request\":"
+             << state.max_admitted_attempts_per_request
+             << ",\n\"attempt_amplification_per_admitted\":";
+    if (admitted_count == 0) {
+      manifest << "null";
+    } else {
+      manifest << static_cast<double>(state.backend_attempts) /
+                    static_cast<double>(admitted_count);
+    }
+    manifest << ",\n\"winning_attempt_kinds\":";
+    write_counts(manifest, state.winning_attempt_kinds);
+  }
+  manifest << ",\n\"invariant_violations\":" << state.invariant_violations
            << ",\n\"decision_samples\":" << state.decision_samples.size()
            << ",\n\"decision_samples_dropped\":" << state.decision_samples_dropped
            << ",\n\"max_issue_lag_us\":" << state.max_issue_lag_us
@@ -609,7 +792,7 @@ int run(const Options& options) {
   const bool valid = !saturated && !state->histogram_error &&
                      state->invariant_violations == 0 &&
                      state->issued == arrivals.size() && state->completed == state->issued &&
-                     state->backend_attempts <= state->issued &&
+                     attempt_accounting_valid(*state) &&
                      (options.allow_errors || state->errors == 0);
   return valid ? 0 : 2;
 }

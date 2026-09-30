@@ -174,7 +174,16 @@ if(BUILD_TESTING)
   add_executable(artc_integration_tests
     tests/integration/rpc_services_test.cc
     tests/integration/attempt_management_test.cc)
-  target_link_libraries(artc_integration_tests PRIVATE artc_rpc GTest::gtest_main)
+  target_include_directories(artc_integration_tests PRIVATE src/app)
+  add_library(artc_rpc_testing STATIC src/app/services.cc)
+  target_include_directories(artc_rpc_testing PUBLIC include)
+  target_link_libraries(artc_rpc_testing PUBLIC artc_core artc_proto grpc++)
+  target_compile_options(artc_rpc_testing PRIVATE
+    -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+    -Werror=return-type)
+  target_compile_definitions(artc_rpc_testing PUBLIC ARTC_ENABLE_TEST_HOOKS=1)
+  target_link_libraries(artc_integration_tests PRIVATE
+    artc_rpc_testing GTest::gtest_main)
   target_compile_options(artc_integration_tests PRIVATE
     -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
     -Werror=return-type)

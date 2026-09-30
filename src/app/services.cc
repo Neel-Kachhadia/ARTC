@@ -1,5 +1,9 @@
 #include "artc/rpc/services.h"
 
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+#include "attempt_test_control.h"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -38,6 +42,7 @@ using namespace std::chrono_literals;
 constexpr std::uint32_t kMaximumWorkUnits = 10'000;
 constexpr std::uint32_t kMaximumPayloadBytes = 1'048'576;
 constexpr std::uint64_t kMaximumDelayUs = 60'000'000;
+enum class TimerSlot : std::uint8_t { kHedge, kRetry, kDeadline };
 
 class BackendCallbackDrain {
  public:
@@ -416,9 +421,18 @@ struct RouterService::State : public std::enable_shared_from_this<RouterService:
         policy(selected_policy),
         method_policies(std::move(configured_method_policies)),
         attempt_config(configured_attempts),
-        hedge_budget(attempt_config.hedge_budget),
-        retry_budget(attempt_config.retry_budget),
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+        test_control(attempt_config.test_control),
+#endif
+        hedge_budget(attempt_config.hedge_budget, now()),
+        retry_budget(attempt_config.retry_budget, now()),
         retry_rng(attempt_config.jitter_seed) {
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    if (test_control && (!test_control->now || !test_control->arm_timer ||
+                         !test_control->cancel_timer || !test_control->checkpoint)) {
+      throw std::invalid_argument("incomplete AttemptManager test control");
+    }
+#endif
     if (configs.empty()) throw std::invalid_argument("router requires at least one replica");
     if (attempt_config.max_total_attempts == 0 ||
         attempt_config.max_total_attempts > kHardMaxTotalAttempts ||
@@ -575,6 +589,10 @@ struct RouterService::State : public std::enable_shared_from_this<RouterService:
   std::vector<Backend> backends;
   std::unordered_map<std::string, MethodPolicy> method_policies;
   AttemptRuntimeConfig attempt_config;
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+  std::shared_ptr<testing::AttemptControl> test_control;
+  std::atomic<std::uint64_t> next_test_manager_id{1};
+#endif
   HedgeBudget hedge_budget;
   RetryBudget retry_budget;
   std::mutex retry_rng_mutex;
@@ -628,6 +646,25 @@ struct RouterService::State : public std::enable_shared_from_this<RouterService:
   std::unique_ptr<control::AdaptiveSelector> adaptive_selector;
   std::unique_ptr<control::Phase2Controller> controller;
   std::atomic<std::uint64_t> decision_sequence{0};
+
+  [[nodiscard]] control::SteadyTime now() const {
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    if (test_control && test_control->now) return test_control->now();
+#endif
+    return control::SteadyClock::now();
+  }
+
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+  void test_checkpoint(testing::Checkpoint point,
+                       AttemptKind kind = AttemptKind::kPrimary) noexcept {
+    if (!test_control) return;
+    try {
+      test_control->checkpoint(point, kind);
+    } catch (...) {
+      std::terminate();
+    }
+  }
+#endif
 };
 
 namespace {
@@ -694,6 +731,10 @@ class AttemptManager final : public CompletionState {
         permit_(std::move(permit)),
         primary_backend_index_(backend_index),
         decision_metadata_(std::move(decision_metadata)),
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+        test_manager_id_(owner_->next_test_manager_id.fetch_add(
+            1, std::memory_order_relaxed)),
+#endif
         total_attempt_limit_(std::min(logical_.policy.max_total_attempts,
                                       owner_->attempt_config.max_total_attempts)) {
     if (const auto replica = primary_lease_.replica()) primary_replica_id_ = replica->id;
@@ -790,7 +831,7 @@ class AttemptManager final : public CompletionState {
 
   void backend_done(const std::shared_ptr<BackendAttempt>& attempt,
                     const grpc::Status& status) noexcept {
-    const auto now = control::SteadyClock::now();
+    const auto now = owner_->now();
     CompletionPlan plan;
     control::RequestOutcome attempt_outcome = control::RequestOutcome::kFailure;
     bool was_terminal = false;
@@ -801,7 +842,7 @@ class AttemptManager final : public CompletionState {
       if (attempt->accounted) return;
       if (active_attempts_ == 0) std::terminate();
       was_terminal = state_ == LogicalState::kCompleted;
-      const auto decision_now = control::SteadyClock::now();
+      const auto decision_now = owner_->now();
       const bool deadline_expired =
           !was_terminal && logical_deadline_expired_at(decision_now);
       attempt->accounted = true;
@@ -935,6 +976,50 @@ class AttemptManager final : public CompletionState {
     std::size_t cancel_count{0};
   };
 
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+  [[nodiscard]] testing::TimerKey timer_key(testing::TimerKind kind) noexcept {
+    auto& generation = timer_generations_[static_cast<std::size_t>(kind)];
+    return {test_manager_id_, kind, ++generation};
+  }
+
+  void arm_timer(TimerSlot slot, grpc::Alarm& alarm,
+                std::chrono::microseconds delay,
+                std::function<void(bool)> callback) {
+    if (!owner_->test_control) {
+      alarm.Set(monotonic_deadline(delay), std::move(callback));
+      return;
+    }
+    const auto kind = static_cast<testing::TimerKind>(slot);
+    const auto key = timer_key(kind);
+    owner_->test_control->arm_timer(
+        key, owner_->now() + delay, std::move(callback));
+  }
+
+  void cancel_timer(TimerSlot slot, grpc::Alarm& alarm) {
+    if (!owner_->test_control) {
+      alarm.Cancel();
+      return;
+    }
+    const auto kind = static_cast<testing::TimerKind>(slot);
+    owner_->test_control->cancel_timer(
+        {test_manager_id_, kind,
+         timer_generations_[static_cast<std::size_t>(kind)]});
+  }
+
+  void checkpoint(testing::Checkpoint point,
+                  AttemptKind kind = AttemptKind::kPrimary) noexcept {
+    owner_->test_checkpoint(point, kind);
+  }
+#else
+  static void arm_timer(TimerSlot, grpc::Alarm& alarm,
+                        std::chrono::microseconds delay,
+                        std::function<void(bool)> callback) {
+    alarm.Set(monotonic_deadline(delay), std::move(callback));
+  }
+
+  static void cancel_timer(TimerSlot, grpc::Alarm& alarm) { alarm.Cancel(); }
+#endif
+
   [[nodiscard]] double attempt_latency_us(control::SteadyTime completed,
                                           control::SteadyTime started) const noexcept {
     return std::chrono::duration<double, std::micro>(completed - started).count();
@@ -945,41 +1030,44 @@ class AttemptManager final : public CompletionState {
   }
 
   [[nodiscard]] bool logical_deadline_expired_locked() const noexcept {
-    return logical_deadline_expired_at(control::SteadyClock::now());
+    return logical_deadline_expired_at(owner_->now());
   }
 
   void schedule_deadline_locked(const std::weak_ptr<AttemptManager>& weak_self) {
     if (!owner_->controller ||
         logical_.context.effective_deadline == control::SteadyTime::max()) return;
-    const auto remaining = logical_.context.remaining_budget(control::SteadyClock::now());
+    const auto remaining = logical_.context.remaining_budget(owner_->now());
     if (remaining <= std::chrono::nanoseconds::zero()) return;
-    deadline_alarm_.Set(monotonic_deadline(ceil_microseconds(remaining)),
-                        [weak_self](bool ok) {
-                          if (ok) {
-                            if (const auto manager = weak_self.lock()) {
-                              manager->on_deadline_alarm();
-                            }
-                          }
-                        });
+    arm_timer(TimerSlot::kDeadline, deadline_alarm_, ceil_microseconds(remaining),
+              [weak_self](bool ok) {
+                if (ok) {
+                  if (const auto manager = weak_self.lock()) {
+                    manager->on_deadline_alarm();
+                  }
+                }
+              });
   }
 
   void on_deadline_alarm() noexcept {
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    checkpoint(testing::Checkpoint::kDeadlineTimerReady);
+#endif
     CompletionPlan plan;
     {
       std::lock_guard lock(mutex_);
       if (state_ != LogicalState::kActive) return;
-      const auto remaining = logical_.context.remaining_budget(control::SteadyClock::now());
+      const auto remaining = logical_.context.remaining_budget(owner_->now());
       if (remaining > std::chrono::nanoseconds::zero()) {
         const auto weak_self = std::weak_ptr<AttemptManager>(
             std::static_pointer_cast<AttemptManager>(shared_from_this()));
-        deadline_alarm_.Set(monotonic_deadline(ceil_microseconds(remaining)),
-                            [weak_self](bool ok) {
-                              if (ok) {
-                                if (const auto manager = weak_self.lock()) {
-                                  manager->on_deadline_alarm();
-                                }
-                              }
-                            });
+        arm_timer(TimerSlot::kDeadline, deadline_alarm_,
+                  ceil_microseconds(remaining), [weak_self](bool ok) {
+                    if (ok) {
+                      if (const auto manager = weak_self.lock()) {
+                        manager->on_deadline_alarm();
+                      }
+                    }
+                  });
         return;
       }
       finish_locked({grpc::StatusCode::DEADLINE_EXCEEDED,
@@ -1093,7 +1181,7 @@ class AttemptManager final : public CompletionState {
         total_attempts_ >= total_attempt_limit_ ||
         active_attempts_ >= owner_->attempt_config.max_active_attempts) return;
     const auto delay = hedge_delay();
-    const auto remaining = logical_.context.remaining_budget(control::SteadyClock::now());
+    const auto remaining = logical_.context.remaining_budget(owner_->now());
     const auto minimum = predicted_attempt_budget(primary.backend_index);
     const auto delay_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(delay);
     if (!retry_delay_fits_deadline(remaining, delay_ns, minimum)) {
@@ -1101,21 +1189,27 @@ class AttemptManager final : public CompletionState {
       return;
     }
     auto until_fire = delay;
-    const auto elapsed = control::SteadyClock::now() - primary.started_at;
+    const auto elapsed = owner_->now() - primary.started_at;
     if (elapsed > control::SteadyClock::duration::zero()) {
       const auto already = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
       until_fire = already >= delay ? std::chrono::microseconds::zero() : delay - already;
     }
     hedge_pending_ = true;
-    hedge_alarm_.Set(monotonic_deadline(until_fire), [weak_self](bool ok) {
-      if (ok) {
-        if (const auto manager = weak_self.lock()) manager->on_hedge_alarm();
-      }
-    });
+    arm_timer(TimerSlot::kHedge, hedge_alarm_, until_fire,
+              [weak_self](bool ok) {
+                if (ok) {
+                  if (const auto manager = weak_self.lock()) {
+                    manager->on_hedge_alarm();
+                  }
+                }
+              });
     saturating_add(owner_->metrics.pending_hedge_timers, 1);
   }
 
   void on_hedge_alarm() noexcept {
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    checkpoint(testing::Checkpoint::kHedgeTimerReady, AttemptKind::kHedge);
+#endif
     CompletionPlan plan;
     try {
       std::lock_guard lock(mutex_);
@@ -1152,7 +1246,7 @@ class AttemptManager final : public CompletionState {
         saturating_add(owner_->metrics.hedge_overload_denied, 1);
         return;
       }
-      const auto remaining = logical_.context.remaining_budget(control::SteadyClock::now());
+      const auto remaining = logical_.context.remaining_budget(owner_->now());
       const auto required = predicted_target_budget(target);
       if (!retry_delay_fits_deadline(remaining, std::chrono::nanoseconds::zero(), required)) {
         lease->release();
@@ -1260,7 +1354,7 @@ class AttemptManager final : public CompletionState {
 
     const auto backoff = retry_backoff_delay(
         logical_.policy, retries_started_, retry_jitter());
-    const auto remaining = logical_.context.remaining_budget(control::SteadyClock::now());
+    const auto remaining = logical_.context.remaining_budget(owner_->now());
     const auto required = predicted_attempt_budget(latest->backend_index);
     const auto backoff_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(backoff);
     if (!retry_delay_fits_deadline(remaining, backoff_ns, required)) {
@@ -1281,25 +1375,31 @@ class AttemptManager final : public CompletionState {
     retry_pending_ = true;
     const auto weak_self = std::weak_ptr<AttemptManager>(
         std::static_pointer_cast<AttemptManager>(shared_from_this()));
-    retry_alarm_.Set(monotonic_deadline(backoff), [weak_self](bool ok) {
-      if (ok) {
-        if (const auto manager = weak_self.lock()) manager->on_retry_alarm();
-      }
-    });
+    arm_timer(TimerSlot::kRetry, retry_alarm_, backoff,
+              [weak_self](bool ok) {
+                if (ok) {
+                  if (const auto manager = weak_self.lock()) {
+                    manager->on_retry_alarm();
+                  }
+                }
+              });
     saturating_add(owner_->metrics.pending_retry_timers, 1);
   }
 
   void on_retry_alarm() noexcept {
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    checkpoint(testing::Checkpoint::kRetryTimerReady, AttemptKind::kRetry);
+#endif
     CompletionPlan plan;
     try {
       std::lock_guard lock(mutex_);
       if (state_ != LogicalState::kActive || !retry_pending_) return;
       clear_retry_pending_locked(false);
       if (logical_deadline_expired_locked()) {
-      finish_locked({grpc::StatusCode::DEADLINE_EXCEEDED,
-                     "logical request deadline expired before retry"},
-                    control::RequestOutcome::kDeadlineMiss, nullptr, &plan,
-                    AttemptCancellationReason::kDeadline);
+        finish_locked({grpc::StatusCode::DEADLINE_EXCEEDED,
+                       "logical request deadline expired before retry"},
+                      control::RequestOutcome::kDeadlineMiss, nullptr, &plan,
+                      AttemptCancellationReason::kDeadline);
       } else if (retry_failure_id_ == 0 || retry_failure_id_ > total_attempts_) {
         finish_locked({grpc::StatusCode::INTERNAL, "retry state lost its failure"},
                       control::RequestOutcome::kFailure, nullptr, &plan);
@@ -1371,7 +1471,7 @@ class AttemptManager final : public CompletionState {
             same_replica_fallback = same_replica_fallback ||
                                     std::find(excluded.begin(), end, target) != end;
             const auto required = predicted_target_budget(target);
-            const auto remaining = logical_.context.remaining_budget(control::SteadyClock::now());
+            const auto remaining = logical_.context.remaining_budget(owner_->now());
             if (!retry_delay_fits_deadline(remaining, std::chrono::nanoseconds::zero(),
                                            required)) {
               lease->release();
@@ -1444,7 +1544,7 @@ class AttemptManager final : public CompletionState {
         std::static_pointer_cast<AttemptManager>(shared_from_this()), attempt);
 
     auto system_now = std::chrono::system_clock::now();
-    auto steady_now = control::SteadyClock::now();
+    auto steady_now = owner_->now();
     auto remaining = logical_.context.remaining_budget(steady_now);
     if (owner_->controller && remaining <= std::chrono::nanoseconds::zero()) {
       attempt->lease.release();
@@ -1469,6 +1569,9 @@ class AttemptManager final : public CompletionState {
     // Serialize dispatch commitment with router shutdown. Shutdown closes this
     // gate before notifying managers, so an attempt either starts before that
     // boundary or is rejected without reaching the backend.
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    checkpoint(testing::Checkpoint::kBeforeDispatchFence, kind);
+#endif
     std::lock_guard dispatch_lock(owner_->dispatch_mutex);
     if (owner_->dispatch_closed.load(std::memory_order_acquire) ||
         owner_->shutdown_source.stop_requested()) {
@@ -1479,7 +1582,7 @@ class AttemptManager final : public CompletionState {
       return StartResult::kExpired;
     }
     system_now = std::chrono::system_clock::now();
-    steady_now = control::SteadyClock::now();
+    steady_now = owner_->now();
     remaining = logical_.context.remaining_budget(steady_now);
     if (owner_->controller && remaining <= std::chrono::nanoseconds::zero()) {
       attempt->lease.release();
@@ -1539,6 +1642,11 @@ class AttemptManager final : public CompletionState {
       ++retries_started_;
       saturating_add(owner_->metrics.retry_started, 1);
     }
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    if (kind != AttemptKind::kPrimary) {
+      checkpoint(testing::Checkpoint::kInsideDispatchFence, kind);
+    }
+#endif
     return StartResult::kStarted;
   }
 
@@ -1567,12 +1675,12 @@ class AttemptManager final : public CompletionState {
     }
     state_ = LogicalState::kCompleted;
     saturating_add(owner_->metrics.logical_terminals, 1);
-    completion_time_ = control::SteadyClock::now();
+    completion_time_ = owner_->now();
     logical_.context.terminal_outcome = outcome;
     if (owner_->controller) owner_->controller->record_logical_completion(outcome);
     cancel_hedge_locked();
     cancel_retry_locked();
-    deadline_alarm_.Cancel();
+    cancel_timer(TimerSlot::kDeadline, deadline_alarm_);
     plan->finish = true;
     plan->status = std::move(status);
     plan->outcome = outcome;
@@ -1631,7 +1739,7 @@ class AttemptManager final : public CompletionState {
       if (owner_->metrics.pending_hedge_timers.fetch_sub(
               1, std::memory_order_relaxed) == 0) std::terminate();
     }
-    if (cancel_alarm) hedge_alarm_.Cancel();
+    if (cancel_alarm) cancel_timer(TimerSlot::kHedge, hedge_alarm_);
   }
 
   void clear_retry_pending_locked(bool cancel_alarm) noexcept {
@@ -1640,7 +1748,7 @@ class AttemptManager final : public CompletionState {
       if (owner_->metrics.pending_retry_timers.fetch_sub(
               1, std::memory_order_relaxed) == 0) std::terminate();
     }
-    if (cancel_alarm) retry_alarm_.Cancel();
+    if (cancel_alarm) cancel_timer(TimerSlot::kRetry, retry_alarm_);
   }
 
   void record_wasted_time_locked(const BackendAttempt& attempt,
@@ -1717,6 +1825,10 @@ class AttemptManager final : public CompletionState {
   std::size_t primary_backend_index_;
   std::string primary_replica_id_;
   std::string decision_metadata_;
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+  std::uint64_t test_manager_id_{0};
+  std::array<std::uint64_t, 3> timer_generations_{};
+#endif
   const std::uint32_t total_attempt_limit_;
   mutable std::mutex mutex_;
   LogicalState state_{LogicalState::kActive};
@@ -1844,9 +1956,18 @@ RouterService::~RouterService() { begin_shutdown(); }
 void RouterService::begin_shutdown() noexcept {
   if (!state_) return;
   {
-    std::lock_guard dispatch_lock(state_->dispatch_mutex);
+    std::unique_lock dispatch_lock(state_->dispatch_mutex, std::defer_lock);
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    if (state_->test_control && !dispatch_lock.try_lock()) {
+      state_->test_checkpoint(testing::Checkpoint::kShutdownFenceContended);
+    }
+#endif
+    if (!dispatch_lock.owns_lock()) dispatch_lock.lock();
     state_->dispatch_closed.store(true, std::memory_order_release);
   }
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+  state_->test_checkpoint(testing::Checkpoint::kShutdownFenceClosed);
+#endif
   state_->shutdown_source.request_stop();
   if (state_->controller) state_->controller->close_admission();
 }
@@ -1897,8 +2018,8 @@ AttemptSnapshot RouterService::attempt_snapshot() const noexcept {
   result.pending_hedge_timers = load(state_->metrics.pending_hedge_timers);
   result.pending_retry_timers = load(state_->metrics.pending_retry_timers);
   result.active_attempts = load(state_->metrics.active_attempts);
-  result.hedge_budget = state_->hedge_budget.snapshot();
-  result.retry_budget = state_->retry_budget.snapshot();
+  result.hedge_budget = state_->hedge_budget.snapshot(state_->now());
+  result.retry_budget = state_->retry_budget.snapshot(state_->now());
   result.pending_backend_callbacks = state_->callback_drain->pending();
   return result;
 }
@@ -1916,7 +2037,7 @@ bool RouterService::wait_for_attempt_callbacks(
 grpc::ServerUnaryReactor* RouterService::Execute(
     grpc::CallbackServerContext* context, const artc::v1::WorkRequest* request,
     artc::v1::WorkResponse* response) {
-  const auto request_arrival = control::SteadyClock::now();
+  const auto request_arrival = state_->now();
   const auto request_arrival_system = std::chrono::system_clock::now();
   auto* reactor = new OwnedServerReactor();
   const auto controller = state_->controller.get();
@@ -1964,7 +2085,7 @@ grpc::ServerUnaryReactor* RouterService::Execute(
         controller->config().default_deadline);
     snapshot = controller->snapshot();
     request_context.controller_version = snapshot->version;
-    const auto admission_now = control::SteadyClock::now();
+    const auto admission_now = state_->now();
     if (request_context.remaining_budget(admission_now) ==
         std::chrono::nanoseconds::zero()) {
       return reject(control::AdmissionResult::kDeadlineExpired,
@@ -2007,7 +2128,7 @@ grpc::ServerUnaryReactor* RouterService::Execute(
   try {
     auto lease = state_->reserve(&backend_index, request->request_id(), &snapshot,
                                  &selected_score);
-    if (controller && request_context.remaining_budget(control::SteadyClock::now()) ==
+    if (controller && request_context.remaining_budget(state_->now()) ==
                           std::chrono::nanoseconds::zero()) {
       lease.release();
       permit.release();

@@ -1,4 +1,5 @@
 #include "artc/rpc/services.h"
+#include "attempt_test_driver.h"
 
 #include <algorithm>
 #include <array>
@@ -30,6 +31,19 @@ bool wait_until(Predicate predicate, std::chrono::milliseconds timeout = 2s) {
     std::this_thread::sleep_for(1ms);
   }
   return predicate();
+}
+
+template <std::size_t N>
+std::array<std::uint64_t, N> seeded_random_values(std::uint64_t seed) {
+  std::array<std::uint64_t, N> values{};
+  for (auto& value : values) {
+    seed += 0x9e37'79b9'7f4a'7c15ULL;
+    value = seed;
+    value = (value ^ (value >> 30U)) * 0xbf58'476d'1ce4'e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d0'49bb'1331'11ebULL;
+    value ^= value >> 31U;
+  }
+  return values;
 }
 
 std::string address_for(int port) {
@@ -1637,6 +1651,792 @@ TEST(AttemptManagerIntegrationTest, ShutdownCancelsPendingRetryTimer) {
   EXPECT_EQ(snapshot.active_attempts, 0U);
 }
 
+TEST(AttemptManagerIntegrationTest,
+     QueuedHedgeCallbackCannotStartAfterPrimaryCompletes) {
+  artc::rpc::testing::AttemptTestDriver driver;
+  HeldBackend a1("A1");
+  HeldBackend a2("A2");
+  std::array<HeldBackend*, 2> backends{&a1, &a2};
+  std::array<int, 2> ports{};
+  std::array<std::unique_ptr<grpc::Server>, 2> backend_servers;
+  for (std::size_t index = 0; index < backends.size(); ++index) {
+    backend_servers[index] = artc::rpc::start_server(
+        "127.0.0.1:0", *backends[index], &ports[index]);
+  }
+  artc::rpc::MethodPolicy method;
+  method.idempotency = artc::rpc::Idempotency::kIdempotent;
+  method.hedging_enabled = true;
+  method.max_total_attempts = 2;
+  method.hedge_delay_min = 5ms;
+  method.hedge_delay_max = 5ms;
+  artc::rpc::AttemptRuntimeConfig attempts;
+  attempts.hedge_budget = {.capacity = 1, .refill_per_second = 0.0};
+  attempts.retry_budget = {.capacity = 0, .refill_per_second = 0.0};
+  attempts.test_control = driver.control();
+  artc::rpc::RouterService router(
+      {{"A1", address_for(ports[0])}, {"A2", address_for(ports[1])}},
+      artc::routing::Policy::kArtcAdaptiveNoDeadline, 17, 0.2,
+      controller_config(), {{"/artc.v1.Traffic/Execute", method}}, attempts);
+  int router_port = 0;
+  auto router_server = artc::rpc::start_server("127.0.0.1:0", router,
+                                                &router_port);
+
+  const std::array<std::size_t, 2> first_indices{};
+  grpc::ClientContext context;
+  context.set_deadline(std::chrono::system_clock::now() + 3s);
+  artc::v1::WorkRequest request;
+  artc::v1::WorkResponse response;
+  grpc::Status status;
+  std::thread caller([&] {
+    status = execute(address_for(router_port), request, &response, &context);
+  });
+  const bool primary_entered = wait_for_new_calls(backends, first_indices, 1);
+  const auto timer = driver.wait_for_timer(
+      artc::rpc::testing::TimerKind::kHedge);
+  driver.pause_next(artc::rpc::testing::Checkpoint::kHedgeTimerReady);
+  std::thread callback;
+  if (timer) {
+    driver.advance_to(*timer);
+    callback = driver.deliver_async(*timer);
+  }
+  const bool callback_paused = timer && driver.wait_until_paused();
+  const auto calls = calls_since(backends, first_indices);
+  const auto primary_call = calls.empty() ? nullptr : calls.front();
+  const bool primary_won = primary_call && primary_call->complete();
+  if (!primary_won) context.TryCancel();
+  caller.join();
+  driver.release_pause();
+  if (callback.joinable()) callback.join();
+  for (auto* backend : backends) {
+    backend->complete_all({grpc::StatusCode::CANCELLED, "test cleanup"});
+  }
+  const bool settled = wait_until([&] {
+    const auto snapshot = router.attempt_snapshot();
+    return snapshot.active_attempts == 0 &&
+           snapshot.pending_hedge_timers == 0 &&
+           snapshot.pending_backend_callbacks == 0;
+  });
+  const auto snapshot = router.attempt_snapshot();
+  router.begin_shutdown();
+  router_server->Shutdown();
+  for (auto& server : backend_servers) server->Shutdown();
+
+  EXPECT_TRUE(primary_entered);
+  EXPECT_TRUE(callback_paused);
+  EXPECT_TRUE(primary_won);
+  EXPECT_TRUE(settled);
+  EXPECT_TRUE(status.ok()) << status.error_message();
+  EXPECT_EQ(snapshot.logical_terminal_transitions_total, 1U);
+  EXPECT_EQ(snapshot.backend_attempts_total[0], 1U);
+  EXPECT_EQ(snapshot.backend_attempts_total[1], 0U);
+  EXPECT_EQ(snapshot.hedge_budget.consumed_total, 0U);
+  EXPECT_EQ(snapshot.pending_hedge_timers, 0U);
+  EXPECT_EQ(snapshot.active_attempts, 0U);
+  EXPECT_EQ(driver.active_timers(), 0U);
+}
+
+namespace {
+
+struct DispatchShutdownResult {
+  grpc::Status status;
+  artc::rpc::AttemptSnapshot snapshot;
+  bool primary_entered{false};
+  bool timer_armed{false};
+  bool callback_paused{false};
+  bool hedge_entered_before_shutdown{false};
+  bool shutdown_contended{false};
+  bool shutdown_closed_fence{false};
+  bool drained{false};
+  std::size_t backend_call_count{0};
+  bool primary_cancelled{false};
+  bool hedge_cancelled{false};
+};
+
+DispatchShutdownResult run_dispatch_shutdown_race(bool pause_inside_fence) {
+  artc::rpc::testing::AttemptTestDriver driver;
+  HeldBackend a1("A1");
+  HeldBackend a2("A2");
+  std::array<HeldBackend*, 2> backends{&a1, &a2};
+  std::array<int, 2> ports{};
+  std::array<std::unique_ptr<grpc::Server>, 2> backend_servers;
+  for (std::size_t index = 0; index < backends.size(); ++index) {
+    backend_servers[index] = artc::rpc::start_server(
+        "127.0.0.1:0", *backends[index], &ports[index]);
+  }
+  artc::rpc::MethodPolicy method;
+  method.idempotency = artc::rpc::Idempotency::kIdempotent;
+  method.hedging_enabled = true;
+  method.max_total_attempts = 2;
+  method.hedge_delay_min = 5ms;
+  method.hedge_delay_max = 5ms;
+  artc::rpc::AttemptRuntimeConfig attempts;
+  attempts.hedge_budget = {.capacity = 1, .refill_per_second = 0.0};
+  attempts.retry_budget = {.capacity = 0, .refill_per_second = 0.0};
+  attempts.test_control = driver.control();
+  artc::rpc::RouterService router(
+      {{"A1", address_for(ports[0])}, {"A2", address_for(ports[1])}},
+      artc::routing::Policy::kArtcAdaptiveNoDeadline, 17, 0.2,
+      controller_config(), {{"/artc.v1.Traffic/Execute", method}}, attempts);
+  int router_port = 0;
+  auto router_server = artc::rpc::start_server("127.0.0.1:0", router,
+                                                &router_port);
+
+  DispatchShutdownResult result;
+  const std::array<std::size_t, 2> first_indices{};
+  grpc::ClientContext context;
+  context.set_deadline(std::chrono::system_clock::now() + 3s);
+  artc::v1::WorkRequest request;
+  artc::v1::WorkResponse response;
+  std::thread caller([&] {
+    result.status = execute(address_for(router_port), request, &response,
+                            &context);
+  });
+  result.primary_entered = wait_for_new_calls(backends, first_indices, 1);
+  const auto timer = driver.wait_for_timer(
+      artc::rpc::testing::TimerKind::kHedge);
+  result.timer_armed = timer.has_value();
+  const auto checkpoint = pause_inside_fence
+                              ? artc::rpc::testing::Checkpoint::kInsideDispatchFence
+                              : artc::rpc::testing::Checkpoint::kBeforeDispatchFence;
+  driver.pause_next(checkpoint, artc::rpc::AttemptKind::kHedge);
+  std::thread timer_callback;
+  if (timer) {
+    driver.advance_to(*timer);
+    timer_callback = driver.deliver_async(*timer);
+  }
+  result.callback_paused = timer && driver.wait_until_paused();
+
+  std::thread shutdown;
+  if (result.callback_paused) {
+    if (pause_inside_fence) {
+      result.hedge_entered_before_shutdown =
+          wait_for_new_calls(backends, first_indices, 2);
+      shutdown = std::thread([&] { router.begin_shutdown(); });
+      result.shutdown_contended = driver.wait_for_checkpoint_count(
+          artc::rpc::testing::Checkpoint::kShutdownFenceContended, 1);
+    } else {
+      shutdown = std::thread([&] { router.begin_shutdown(); });
+      result.shutdown_closed_fence = driver.wait_for_checkpoint_count(
+          artc::rpc::testing::Checkpoint::kShutdownFenceClosed, 1);
+    }
+  }
+  driver.release_pause();
+  if (timer_callback.joinable()) timer_callback.join();
+  if (shutdown.joinable()) shutdown.join();
+  else router.begin_shutdown();
+  if (caller.joinable()) caller.join();
+
+  const auto request_calls = calls_since(backends, first_indices);
+  const auto primary_call = request_calls.empty() ? nullptr : request_calls[0];
+  const auto hedge_call = request_calls.size() > 1 ? request_calls[1] : nullptr;
+  result.backend_call_count = request_calls.size();
+  result.shutdown_closed_fence =
+      driver.checkpoint_count(
+          artc::rpc::testing::Checkpoint::kShutdownFenceClosed) >= 1;
+  result.primary_cancelled = primary_call &&
+      primary_call->wait_for_cancellation(2s);
+  result.hedge_cancelled = hedge_call &&
+      hedge_call->wait_for_cancellation(2s);
+  for (auto* backend : backends) {
+    backend->complete_all({grpc::StatusCode::CANCELLED, "shutdown cleanup"});
+  }
+  const auto drain_deadline = std::chrono::steady_clock::now() + 2s;
+  const bool callbacks_drained = router.wait_for_attempt_callbacks(drain_deadline);
+  result.drained = callbacks_drained && wait_until([&] {
+    const auto snapshot = router.attempt_snapshot();
+    return snapshot.active_attempts == 0 &&
+           snapshot.pending_backend_callbacks == 0;
+  });
+  result.snapshot = router.attempt_snapshot();
+  router_server->Shutdown();
+  for (auto& server : backend_servers) server->Shutdown();
+  return result;
+}
+
+}  // namespace
+
+TEST(AttemptManagerIntegrationTest,
+     ShutdownClosingFenceRejectsQueuedHedgeWithoutConsumingBudget) {
+  const auto result = run_dispatch_shutdown_race(false);
+  EXPECT_TRUE(result.primary_entered);
+  EXPECT_TRUE(result.timer_armed);
+  EXPECT_TRUE(result.callback_paused);
+  EXPECT_TRUE(result.shutdown_closed_fence);
+  EXPECT_EQ(result.backend_call_count, 1U);
+  EXPECT_TRUE(result.primary_cancelled);
+  EXPECT_TRUE(result.drained);
+  EXPECT_EQ(result.status.error_code(), grpc::StatusCode::CANCELLED);
+  EXPECT_EQ(result.snapshot.backend_attempts_total[0] +
+                result.snapshot.backend_attempts_total[1],
+            1U);
+  EXPECT_EQ(result.snapshot.hedge_budget.consumed_total, 0U);
+  EXPECT_EQ(result.snapshot.logical_terminal_transitions_total, 1U);
+  EXPECT_EQ(result.snapshot.cancellations_by_reason_total[
+                static_cast<std::size_t>(
+                    artc::rpc::AttemptCancellationReason::kShutdown)],
+            1U);
+  EXPECT_EQ(result.snapshot.active_attempts, 0U);
+}
+
+TEST(AttemptManagerIntegrationTest,
+     ShutdownAfterHedgeCommitCancelsCommittedAttempt) {
+  const auto result = run_dispatch_shutdown_race(true);
+  EXPECT_TRUE(result.primary_entered);
+  EXPECT_TRUE(result.timer_armed);
+  EXPECT_TRUE(result.callback_paused);
+  EXPECT_TRUE(result.hedge_entered_before_shutdown);
+  EXPECT_TRUE(result.shutdown_contended);
+  EXPECT_TRUE(result.shutdown_closed_fence);
+  EXPECT_EQ(result.backend_call_count, 2U);
+  EXPECT_TRUE(result.primary_cancelled);
+  EXPECT_TRUE(result.hedge_cancelled);
+  EXPECT_TRUE(result.drained);
+  EXPECT_EQ(result.status.error_code(), grpc::StatusCode::CANCELLED);
+  EXPECT_EQ(result.snapshot.backend_attempts_total[0], 1U);
+  EXPECT_EQ(result.snapshot.backend_attempts_total[1], 1U);
+  EXPECT_EQ(result.snapshot.hedge_budget.consumed_total, 1U);
+  EXPECT_EQ(result.snapshot.logical_terminal_transitions_total, 1U);
+  EXPECT_EQ(result.snapshot.cancellations_by_reason_total[
+                static_cast<std::size_t>(
+                    artc::rpc::AttemptCancellationReason::kShutdown)],
+            2U);
+  EXPECT_EQ(result.snapshot.active_attempts, 0U);
+}
+
+TEST(AttemptManagerIntegrationTest,
+     QueuedRetryCallbackCannotStartAfterCallerCancellation) {
+  artc::rpc::testing::AttemptTestDriver driver;
+  HeldBackend a1("A1");
+  HeldBackend a2("A2");
+  std::array<HeldBackend*, 2> backends{&a1, &a2};
+  std::array<int, 2> ports{};
+  std::array<std::unique_ptr<grpc::Server>, 2> backend_servers;
+  for (std::size_t index = 0; index < backends.size(); ++index) {
+    backend_servers[index] = artc::rpc::start_server(
+        "127.0.0.1:0", *backends[index], &ports[index]);
+  }
+  artc::rpc::MethodPolicy method;
+  method.idempotency = artc::rpc::Idempotency::kIdempotent;
+  method.retry_enabled = true;
+  method.max_total_attempts = 2;
+  method.max_retries = 1;
+  method.retry_backoff_base = 5ms;
+  method.retry_backoff_max = 5ms;
+  method.retry_jitter_max = 0ms;
+  artc::rpc::AttemptRuntimeConfig attempts;
+  attempts.hedge_budget = {.capacity = 0, .refill_per_second = 0.0};
+  attempts.retry_budget = {.capacity = 1, .refill_per_second = 0.0};
+  attempts.test_control = driver.control();
+  artc::rpc::RouterService router(
+      {{"A1", address_for(ports[0])}, {"A2", address_for(ports[1])}},
+      artc::routing::Policy::kArtcAdaptiveNoDeadline, 17, 0.2,
+      controller_config(), {{"/artc.v1.Traffic/Execute", method}}, attempts);
+  int router_port = 0;
+  auto router_server = artc::rpc::start_server("127.0.0.1:0", router,
+                                                &router_port);
+
+  grpc::ClientContext context;
+  context.set_deadline(std::chrono::system_clock::now() + 3s);
+  artc::v1::WorkRequest request;
+  artc::v1::WorkResponse response;
+  grpc::Status status;
+  std::thread caller([&] {
+    status = execute(address_for(router_port), request, &response, &context);
+  });
+  const std::array<std::size_t, 2> first_indices{};
+  const bool primary_entered =
+      wait_for_new_calls(backends, first_indices, 1, 2s);
+  const auto calls = calls_since(backends, first_indices);
+  const auto primary_call = calls.empty() ? nullptr : calls.front();
+  const bool retryable_failure = primary_call && primary_call->complete(
+      {grpc::StatusCode::UNAVAILABLE, "seeded transient failure"});
+  const auto retry_timer = driver.wait_for_timer(
+      artc::rpc::testing::TimerKind::kRetry);
+  driver.pause_next(artc::rpc::testing::Checkpoint::kRetryTimerReady);
+  std::thread timer_callback;
+  if (retry_timer) {
+    driver.advance_to(*retry_timer);
+    timer_callback = driver.deliver_async(*retry_timer);
+  }
+  const bool callback_paused = retry_timer && driver.wait_until_paused();
+  context.TryCancel();
+  caller.join();
+  const bool terminal_before_release = wait_until([&] {
+    return router.attempt_snapshot().logical_terminal_transitions_total == 1U;
+  });
+  driver.release_pause();
+  if (timer_callback.joinable()) timer_callback.join();
+  const bool drained = wait_until([&] {
+    const auto current = router.attempt_snapshot();
+    return current.active_attempts == 0 &&
+           current.pending_backend_callbacks == 0 &&
+           current.pending_retry_timers == 0;
+  });
+  const auto snapshot = router.attempt_snapshot();
+  const auto backend_call_count = a1.call_count() + a2.call_count();
+  router.begin_shutdown();
+  router_server->Shutdown();
+  for (auto& server : backend_servers) server->Shutdown();
+
+  EXPECT_TRUE(primary_entered);
+  EXPECT_TRUE(retryable_failure);
+  EXPECT_TRUE(retry_timer.has_value());
+  EXPECT_TRUE(callback_paused);
+  EXPECT_TRUE(terminal_before_release);
+  EXPECT_TRUE(drained);
+  EXPECT_EQ(backend_call_count, 1U);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::CANCELLED);
+  EXPECT_EQ(snapshot.logical_terminal_transitions_total, 1U);
+  EXPECT_EQ(snapshot.backend_attempts_total[2], 0U);
+  EXPECT_EQ(snapshot.retry_budget.consumed_total, 0U);
+  EXPECT_EQ(snapshot.pending_retry_timers, 0U);
+  EXPECT_EQ(snapshot.active_attempts, 0U);
+}
+
+TEST(AttemptManagerIntegrationTest,
+     DeadlineDecisionUsesCurrentTimeBeforeLatePrimarySuccess) {
+  artc::rpc::testing::AttemptTestDriver driver;
+  HeldBackend backend("A1");
+  int backend_port = 0;
+  auto backend_server = artc::rpc::start_server("127.0.0.1:0", backend,
+                                                &backend_port);
+  artc::rpc::AttemptRuntimeConfig attempts;
+  attempts.hedge_budget = {.capacity = 0, .refill_per_second = 0.0};
+  attempts.retry_budget = {.capacity = 0, .refill_per_second = 0.0};
+  attempts.test_control = driver.control();
+  artc::rpc::RouterService router(
+      {{"A1", address_for(backend_port)}},
+      artc::routing::Policy::kArtcAdaptiveNoDeadline, 17, 0.2,
+      controller_config(), {}, attempts);
+  int router_port = 0;
+  auto router_server = artc::rpc::start_server("127.0.0.1:0", router,
+                                                &router_port);
+
+  grpc::ClientContext context;
+  context.set_deadline(std::chrono::system_clock::now() + 3s);
+  artc::v1::WorkRequest request;
+  artc::v1::WorkResponse response;
+  grpc::Status status;
+  std::thread caller([&] {
+    status = execute(address_for(router_port), request, &response, &context);
+  });
+  const bool primary_entered = backend.wait_for_calls(1, 2s);
+  const auto deadline_timer = driver.wait_for_timer(
+      artc::rpc::testing::TimerKind::kDeadline);
+  driver.pause_next(artc::rpc::testing::Checkpoint::kDeadlineTimerReady);
+  std::thread deadline_callback;
+  if (deadline_timer) {
+    driver.advance_to(*deadline_timer);
+    deadline_callback = driver.deliver_async(*deadline_timer);
+  }
+  const bool callback_paused = deadline_timer && driver.wait_until_paused();
+  const auto primary_call = backend.call(0);
+  const bool primary_returned = primary_call && primary_call->complete();
+  if (!primary_returned) context.TryCancel();
+  caller.join();
+  driver.release_pause();
+  if (deadline_callback.joinable()) deadline_callback.join();
+  backend.complete_all({grpc::StatusCode::CANCELLED, "test cleanup"});
+  const bool drained = wait_until([&] {
+    const auto snapshot = router.attempt_snapshot();
+    return snapshot.active_attempts == 0 &&
+           snapshot.pending_backend_callbacks == 0 &&
+           snapshot.pending_hedge_timers == 0 &&
+           snapshot.pending_retry_timers == 0;
+  });
+  const auto snapshot = router.attempt_snapshot();
+  router.begin_shutdown();
+  router_server->Shutdown();
+  backend_server->Shutdown();
+
+  EXPECT_TRUE(primary_entered);
+  EXPECT_TRUE(deadline_timer.has_value());
+  EXPECT_TRUE(callback_paused);
+  EXPECT_TRUE(primary_returned);
+  EXPECT_TRUE(drained);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::DEADLINE_EXCEEDED);
+  EXPECT_EQ(snapshot.logical_terminal_transitions_total, 1U);
+  EXPECT_EQ(snapshot.backend_attempts_total[0], 1U);
+  EXPECT_EQ(snapshot.attempt_completions_total[0], 1U);
+  EXPECT_EQ(snapshot.winning_attempts_total[0], 0U);
+  EXPECT_EQ(snapshot.active_attempts, 0U);
+  EXPECT_EQ(driver.active_timers(), 0U);
+}
+
+TEST(AttemptManagerIntegrationTest,
+     SeededManagerEventSequencesCheckBoundsAfterEveryEvent) {
+  constexpr std::uint64_t kSeed = 16;
+  enum class Event : unsigned {
+    kPrimaryWins,
+    kHedgeWins,
+    kRetrySucceeds,
+    kCallerCancels,
+    kPermanentFailure,
+  };
+  constexpr std::size_t kSequences = 15;
+  constexpr std::size_t kEventKinds = 5;
+  std::array<Event, kSequences> events{};
+  std::array<std::uint64_t, kEventKinds> event_counts{};
+  const auto random_values = seeded_random_values<kSequences>(kSeed);
+  std::array<bool, kSequences> fire_timer_before_terminal{};
+  std::array<bool, 2> primary_success_order_coverage{};
+  std::array<bool, 2> caller_cancel_order_coverage{};
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    events[index] = static_cast<Event>(random_values[index] % kEventKinds);
+    fire_timer_before_terminal[index] = (random_values[index] & 2U) != 0;
+    const auto event = events[index];
+    ++event_counts[static_cast<std::size_t>(event)];
+    if (event == Event::kPrimaryWins) {
+      primary_success_order_coverage[fire_timer_before_terminal[index]] = true;
+    } else if (event == Event::kCallerCancels) {
+      caller_cancel_order_coverage[fire_timer_before_terminal[index]] = true;
+    }
+  }
+  EXPECT_EQ(event_counts[static_cast<std::size_t>(Event::kPrimaryWins)], 3U);
+  EXPECT_EQ(event_counts[static_cast<std::size_t>(Event::kHedgeWins)], 3U);
+  EXPECT_EQ(event_counts[static_cast<std::size_t>(Event::kRetrySucceeds)], 3U);
+  EXPECT_EQ(event_counts[static_cast<std::size_t>(Event::kCallerCancels)], 4U);
+  EXPECT_EQ(event_counts[static_cast<std::size_t>(Event::kPermanentFailure)], 2U);
+  EXPECT_TRUE(primary_success_order_coverage[0]);
+  EXPECT_TRUE(primary_success_order_coverage[1]);
+  EXPECT_TRUE(caller_cancel_order_coverage[0]);
+  EXPECT_TRUE(caller_cancel_order_coverage[1]);
+
+  artc::rpc::testing::AttemptTestDriver driver;
+  HeldBackend a1("A1");
+  HeldBackend a2("A2");
+  std::array<HeldBackend*, 2> backends{&a1, &a2};
+  std::array<int, 2> ports{};
+  std::array<std::unique_ptr<grpc::Server>, 2> backend_servers;
+  for (std::size_t index = 0; index < backends.size(); ++index) {
+    backend_servers[index] = artc::rpc::start_server(
+        "127.0.0.1:0", *backends[index], &ports[index]);
+  }
+  artc::rpc::MethodPolicy method;
+  method.idempotency = artc::rpc::Idempotency::kIdempotent;
+  method.hedging_enabled = true;
+  method.retry_enabled = true;
+  method.max_total_attempts = 3;
+  method.max_retries = 1;
+  method.hedge_delay_min = 5ms;
+  method.hedge_delay_max = 5ms;
+  method.retry_backoff_base = 5ms;
+  method.retry_backoff_max = 5ms;
+  method.retry_jitter_max = 0ms;
+  artc::rpc::AttemptRuntimeConfig attempts;
+  attempts.hedge_budget = {.capacity = 32, .refill_per_second = 0.0};
+  attempts.retry_budget = {.capacity = 32, .refill_per_second = 0.0};
+  attempts.test_control = driver.control();
+  auto config = controller_config();
+  config.aimd.control_interval = 1ms;
+  artc::rpc::RouterService router(
+      {{"A1", address_for(ports[0])}, {"A2", address_for(ports[1])}},
+      artc::routing::Policy::kArtcAdaptiveNoDeadline, 17, 0.2,
+      config, {{"/artc.v1.Traffic/Execute", method}}, attempts);
+  int router_port = 0;
+  auto router_server = artc::rpc::start_server("127.0.0.1:0", router,
+                                                &router_port);
+
+  for (std::size_t sequence = 0; sequence < kSequences; ++sequence) {
+    SCOPED_TRACE(::testing::Message() << "seed=" << kSeed << " sequence="
+                                     << sequence << " event="
+                                     << static_cast<unsigned>(events[sequence]));
+    ASSERT_EQ(driver.active_timers(), 0U);
+    const auto before = router.attempt_snapshot();
+    const std::array<std::size_t, 2> first_indices{
+        a1.call_count(), a2.call_count()};
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + 30s);
+    artc::v1::WorkRequest request;
+    request.set_request_id(sequence + 1);
+    artc::v1::WorkResponse response;
+    grpc::Status status;
+    std::thread caller([&] {
+      status = execute(address_for(router_port), request, &response, &context);
+    });
+    const bool primary_entered =
+        wait_for_new_calls(backends, first_indices, 1, 2s);
+    const auto hedge_timer = driver.wait_for_timer(
+        artc::rpc::testing::TimerKind::kHedge);
+    auto request_calls = calls_since(backends, first_indices);
+    const auto primary_call = request_calls.empty() ? nullptr : request_calls[0];
+    const bool setup = primary_entered && hedge_timer && primary_call;
+    if (!setup) {
+      context.TryCancel();
+      caller.join();
+      for (auto* backend : backends) {
+        backend->complete_all({grpc::StatusCode::CANCELLED, "setup cleanup"});
+      }
+      ADD_FAILURE() << "seeded logical request did not start primary and hedge timer";
+      break;
+    }
+
+    const auto previous_total_attempts = before.backend_attempts_total[0] +
+                                         before.backend_attempts_total[1] +
+                                         before.backend_attempts_total[2];
+    const auto check_invariants = [&](std::string_view stage) {
+      const auto snapshot = router.attempt_snapshot();
+      const auto total_attempts = snapshot.backend_attempts_total[0] +
+                                  snapshot.backend_attempts_total[1] +
+                                  snapshot.backend_attempts_total[2];
+      const auto total_completions = snapshot.attempt_completions_total[0] +
+                                     snapshot.attempt_completions_total[1] +
+                                     snapshot.attempt_completions_total[2];
+      const auto total_winners = snapshot.winning_attempts_total[0] +
+                                 snapshot.winning_attempts_total[1] +
+                                 snapshot.winning_attempts_total[2];
+      EXPECT_EQ(snapshot.logical_requests_total, sequence + 1U) << stage;
+      EXPECT_LE(snapshot.logical_terminal_transitions_total,
+                snapshot.logical_requests_total) << stage;
+      EXPECT_LE(snapshot.active_attempts, 2U) << stage;
+      EXPECT_LE(total_attempts, 3U * snapshot.logical_requests_total) << stage;
+      EXPECT_LE(total_attempts - previous_total_attempts, 3U) << stage;
+      EXPECT_LE(total_completions, total_attempts) << stage;
+      EXPECT_LE(total_winners, snapshot.logical_terminal_transitions_total) << stage;
+      EXPECT_GE(snapshot.hedge_budget.tokens, 0.0) << stage;
+      EXPECT_GE(snapshot.retry_budget.tokens, 0.0) << stage;
+    };
+    check_invariants("primary dispatched");
+
+    const auto deliver_stale_hedge = [&] {
+      const auto before_stale = router.attempt_snapshot();
+      driver.deliver(*hedge_timer);
+      const auto after = router.attempt_snapshot();
+      EXPECT_EQ(after.backend_attempts_total, before_stale.backend_attempts_total);
+      EXPECT_EQ(after.attempt_completions_total,
+                before_stale.attempt_completions_total);
+      EXPECT_EQ(after.hedge_started_total, before_stale.hedge_started_total);
+      EXPECT_EQ(after.hedge_budget_denied_total,
+                before_stale.hedge_budget_denied_total);
+      EXPECT_EQ(after.hedge_deadline_denied_total,
+                before_stale.hedge_deadline_denied_total);
+      EXPECT_EQ(after.hedge_overload_denied_total,
+                before_stale.hedge_overload_denied_total);
+      EXPECT_EQ(after.hedge_no_target_total, before_stale.hedge_no_target_total);
+      EXPECT_EQ(after.hedge_attempt_limit_total,
+                before_stale.hedge_attempt_limit_total);
+      EXPECT_EQ(after.hedge_dispatch_errors_total,
+                before_stale.hedge_dispatch_errors_total);
+      EXPECT_EQ(after.retry_started_total, before_stale.retry_started_total);
+      EXPECT_EQ(after.retry_budget_denied_total,
+                before_stale.retry_budget_denied_total);
+      EXPECT_EQ(after.retry_deadline_denied_total,
+                before_stale.retry_deadline_denied_total);
+      EXPECT_EQ(after.retry_not_retryable_total,
+                before_stale.retry_not_retryable_total);
+      EXPECT_EQ(after.retry_no_target_total, before_stale.retry_no_target_total);
+      EXPECT_EQ(after.retry_attempt_limit_total,
+                before_stale.retry_attempt_limit_total);
+      EXPECT_EQ(after.retry_same_replica_total,
+                before_stale.retry_same_replica_total);
+      EXPECT_EQ(after.hedge_budget.consumed_total,
+                before_stale.hedge_budget.consumed_total);
+      EXPECT_EQ(after.hedge_budget.denied_total,
+                before_stale.hedge_budget.denied_total);
+      EXPECT_EQ(after.hedge_budget.tokens, before_stale.hedge_budget.tokens);
+      EXPECT_EQ(after.hedge_budget.available,
+                before_stale.hedge_budget.available);
+      EXPECT_EQ(after.retry_budget.consumed_total,
+                before_stale.retry_budget.consumed_total);
+      EXPECT_EQ(after.retry_budget.denied_total,
+                before_stale.retry_budget.denied_total);
+      EXPECT_EQ(after.retry_budget.tokens, before_stale.retry_budget.tokens);
+      EXPECT_EQ(after.retry_budget.available,
+                before_stale.retry_budget.available);
+      EXPECT_EQ(after.pending_hedge_timers, before_stale.pending_hedge_timers);
+      EXPECT_EQ(after.pending_retry_timers, before_stale.pending_retry_timers);
+      EXPECT_EQ(after.active_attempts, before_stale.active_attempts);
+      EXPECT_EQ(after.cancelled_attempts_total,
+                before_stale.cancelled_attempts_total);
+      EXPECT_EQ(after.cancellations_by_reason_total,
+                before_stale.cancellations_by_reason_total);
+      EXPECT_EQ(after.winning_attempts_total,
+                before_stale.winning_attempts_total);
+      EXPECT_EQ(after.logical_terminal_transitions_total,
+                before_stale.logical_terminal_transitions_total);
+      check_invariants("stale hedge timer delivered");
+    };
+
+    switch (events[sequence]) {
+      case Event::kPrimaryWins: {
+        std::shared_ptr<HeldBackendCall> hedge_call;
+        if (fire_timer_before_terminal[sequence]) {
+          driver.advance_to(*hedge_timer);
+          driver.deliver(*hedge_timer);
+          const bool hedge_entered =
+              wait_for_new_calls(backends, first_indices, 2, 2s);
+          request_calls = calls_since(backends, first_indices);
+          if (hedge_entered && request_calls.size() > 1) {
+            hedge_call = request_calls[1];
+            check_invariants("hedge dispatched before primary success");
+          } else {
+            context.TryCancel();
+            caller.join();
+            ADD_FAILURE() << "seeded primary-win event did not dispatch hedge";
+            break;
+          }
+        }
+        EXPECT_TRUE(primary_call->complete());
+        caller.join();
+        EXPECT_TRUE(status.ok()) << status.error_message();
+        if (hedge_call) {
+          EXPECT_TRUE(hedge_call->wait_for_cancellation(2s));
+          hedge_call->complete({grpc::StatusCode::CANCELLED, "primary won"});
+        } else {
+          deliver_stale_hedge();
+        }
+        check_invariants("primary won");
+        break;
+      }
+      case Event::kHedgeWins: {
+        driver.advance_to(*hedge_timer);
+        driver.deliver(*hedge_timer);
+        const bool hedge_entered =
+            wait_for_new_calls(backends, first_indices, 2, 2s);
+        request_calls = calls_since(backends, first_indices);
+        const auto hedge_call = request_calls.size() > 1 ? request_calls[1] : nullptr;
+        if (!hedge_entered || !hedge_call) {
+          context.TryCancel();
+          caller.join();
+          ADD_FAILURE() << "seeded hedge event did not dispatch";
+          break;
+        }
+        check_invariants("hedge dispatched");
+        EXPECT_TRUE(hedge_call->complete());
+        caller.join();
+        EXPECT_TRUE(status.ok()) << status.error_message();
+        EXPECT_TRUE(primary_call->wait_for_cancellation(2s));
+        primary_call->complete({grpc::StatusCode::CANCELLED, "hedge won"});
+        check_invariants("hedge completed");
+        break;
+      }
+      case Event::kRetrySucceeds: {
+        EXPECT_TRUE(primary_call->complete(
+            {grpc::StatusCode::UNAVAILABLE, "seeded retryable failure"}));
+        const auto retry_timer = driver.wait_for_timer(
+            artc::rpc::testing::TimerKind::kRetry);
+        if (!retry_timer) {
+          context.TryCancel();
+          caller.join();
+          ADD_FAILURE() << "seeded retry event did not arm backoff";
+          break;
+        }
+        check_invariants("retry timer armed");
+        deliver_stale_hedge();
+        driver.advance_to(*retry_timer);
+        driver.deliver(*retry_timer);
+        const bool retry_entered =
+            wait_for_new_calls(backends, first_indices, 2, 2s);
+        request_calls = calls_since(backends, first_indices);
+        const auto retry_call = request_calls.size() > 1 ? request_calls[1] : nullptr;
+        if (!retry_entered || !retry_call) {
+          context.TryCancel();
+          caller.join();
+          ADD_FAILURE() << "seeded retry event did not dispatch";
+          break;
+        }
+        check_invariants("retry dispatched");
+        EXPECT_TRUE(retry_call->complete());
+        caller.join();
+        EXPECT_TRUE(status.ok()) << status.error_message();
+        check_invariants("retry completed");
+        break;
+      }
+      case Event::kCallerCancels: {
+        std::shared_ptr<HeldBackendCall> hedge_call;
+        if (fire_timer_before_terminal[sequence]) {
+          driver.advance_to(*hedge_timer);
+          driver.deliver(*hedge_timer);
+          const bool hedge_entered =
+              wait_for_new_calls(backends, first_indices, 2, 2s);
+          request_calls = calls_since(backends, first_indices);
+          if (hedge_entered && request_calls.size() > 1) {
+            hedge_call = request_calls[1];
+          } else {
+            context.TryCancel();
+            caller.join();
+            ADD_FAILURE() << "seeded cancellation event did not dispatch hedge";
+            break;
+          }
+        }
+        check_invariants("attempts running before caller cancellation");
+        context.TryCancel();
+        caller.join();
+        const bool terminal = wait_until([&] {
+          return router.attempt_snapshot().logical_terminal_transitions_total ==
+                 sequence + 1U;
+        });
+        EXPECT_TRUE(terminal);
+        EXPECT_EQ(status.error_code(), grpc::StatusCode::CANCELLED);
+        EXPECT_TRUE(primary_call->wait_for_cancellation(2s));
+        primary_call->complete({grpc::StatusCode::CANCELLED, "caller cancelled"});
+        if (hedge_call) {
+          EXPECT_TRUE(hedge_call->wait_for_cancellation(2s));
+          hedge_call->complete(
+              {grpc::StatusCode::CANCELLED, "caller cancelled"});
+        } else {
+          deliver_stale_hedge();
+        }
+        check_invariants("caller cancellation completed");
+        break;
+      }
+      case Event::kPermanentFailure:
+        EXPECT_TRUE(primary_call->complete(
+            {grpc::StatusCode::INVALID_ARGUMENT, "seeded permanent failure"}));
+        caller.join();
+        EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+        deliver_stale_hedge();
+        break;
+    }
+
+    for (auto* backend : backends) {
+      backend->complete_all({grpc::StatusCode::CANCELLED, "sequence cleanup"});
+    }
+    const bool settled = wait_until([&] {
+      const auto snapshot = router.attempt_snapshot();
+      const auto attempts_started = snapshot.backend_attempts_total[0] +
+                                    snapshot.backend_attempts_total[1] +
+                                    snapshot.backend_attempts_total[2];
+      const auto attempts_completed = snapshot.attempt_completions_total[0] +
+                                      snapshot.attempt_completions_total[1] +
+                                      snapshot.attempt_completions_total[2];
+      const auto controller = router.controller_snapshot();
+      return snapshot.active_attempts == 0 &&
+             attempts_completed == attempts_started &&
+             snapshot.logical_terminal_transitions_total == sequence + 1U &&
+             snapshot.pending_hedge_timers == 0 &&
+             snapshot.pending_retry_timers == 0 && controller &&
+             snapshot.pending_backend_callbacks == 0 &&
+             controller->permits_acquired == sequence + 1U &&
+             controller->permits_released == sequence + 1U;
+    }, 500ms);
+    if (!settled) {
+      const auto snapshot = router.attempt_snapshot();
+      const auto controller = router.controller_snapshot();
+      ADD_FAILURE() << "seed=" << kSeed << " sequence=" << sequence
+                    << " active=" << snapshot.active_attempts
+                    << " attempts=" << snapshot.backend_attempts_total[0] << "/"
+                    << snapshot.backend_attempts_total[1] << "/"
+                    << snapshot.backend_attempts_total[2]
+                    << " completions=" << snapshot.attempt_completions_total[0]
+                    << "/" << snapshot.attempt_completions_total[1] << "/"
+                    << snapshot.attempt_completions_total[2]
+                    << " logical=" << snapshot.logical_terminal_transitions_total
+                    << " timers=" << snapshot.pending_hedge_timers << "/"
+                    << snapshot.pending_retry_timers
+                    << " callbacks=" << snapshot.pending_backend_callbacks
+                    << " permits=" << (controller ? controller->permits_acquired : 0)
+                    << "/" << (controller ? controller->permits_released : 0);
+    }
+    check_invariants("logical request drained");
+    EXPECT_EQ(driver.active_timers(), 0U);
+  }
+
+  router.begin_shutdown();
+  router_server->Shutdown();
+  for (auto& server : backend_servers) server->Shutdown();
+}
+
 TEST(AttemptManagerIntegrationTest, SeededCompletionEventSequencesPreserveBounds) {
   constexpr std::uint64_t kSeed = 16;
   enum class Event : unsigned {
@@ -1652,16 +2452,10 @@ TEST(AttemptManagerIntegrationTest, SeededCompletionEventSequencesPreserveBounds
   constexpr std::size_t kEventKinds = 5;
   std::array<Event, kSequences> events{};
   std::array<std::uint64_t, kEventKinds> event_counts{};
-  std::uint64_t random_state = kSeed;
-  const auto next_random = [&random_state] {
-    random_state += 0x9e37'79b9'7f4a'7c15ULL;
-    std::uint64_t value = random_state;
-    value = (value ^ (value >> 30U)) * 0xbf58'476d'1ce4'e5b9ULL;
-    value = (value ^ (value >> 27U)) * 0x94d0'49bb'1331'11ebULL;
-    return value ^ (value >> 31U);
-  };
-  for (auto& event : events) {
-    event = static_cast<Event>(next_random() % kEventKinds);
+  const auto random_values = seeded_random_values<kSequences>(kSeed);
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    events[index] = static_cast<Event>(random_values[index] % kEventKinds);
+    const auto event = events[index];
     ++event_counts[static_cast<std::size_t>(event)];
   }
   for (const auto count : event_counts) EXPECT_GT(count, 0U);

@@ -21,6 +21,12 @@
 
 namespace artc::rpc {
 
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+namespace testing {
+struct AttemptControl;
+}
+#endif
+
 struct ReplicaConfig {
   std::string id;
   std::string address;
@@ -51,6 +57,9 @@ struct AttemptRuntimeConfig {
                                    .refill_per_second = 1.0};
   AttemptBudgetConfig retry_budget{.capacity = 10,
                                    .refill_per_second = 1.0};
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+  std::shared_ptr<testing::AttemptControl> test_control;
+#endif
 };
 
 enum class AttemptCancellationReason : std::uint8_t {

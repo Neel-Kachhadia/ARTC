@@ -2,7 +2,7 @@
 
 ## Decision
 
-**Validated within ARTC's documented scope, with limitations.** This is a single-process Linux C++23 unary-gRPC prototype with a static replica pool and in-memory controller state. The evidence does not establish readiness for an arbitrary production fleet or deployment environment.
+**PASS WITH LIMITATION.** ARTC was validated against its documented production-readiness criteria within the implemented scope. It is a single-process Linux C++23 unary-gRPC prototype with a static replica pool and in-memory controller state; the evidence does not establish readiness for every production fleet or deployment environment.
 
 ## Review status
 

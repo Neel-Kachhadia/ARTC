@@ -16,7 +16,7 @@ Toolchain and tests:
 - ASan/UBSan with leak detection: focused lifecycle/budget/state suite 47/47 passed.
 - TSan: focused lifecycle/budget/state/controller-race suite 49/49 passed; build and test process use `setarch -R` (no host ASLR setting changed).
 
-Docker preflight from the same host-capable execution context: `whoami=neel`; user `neel` had `/run/docker.sock` ACL `user:neel:rw-`; `docker ps`, `docker info`, and Compose 2.40.3 succeeded without sudo. Docker Engine was 29.1.3. Compose image `artc-phase1:local` inspected as `sha256:6169bae390f8c231b68d8ea02e485c5ca5e849db1c9e8ded61c29db6f5a773cb`, created 2026-10-02 00:16:20+05:30, from `ubuntu:24.04` digest `sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3`.
+Docker preflight succeeded without sudo in the host-capable execution context. Docker Engine was 29.1.3. Compose image `artc-phase1:local` inspected as `sha256:6169bae390f8c231b68d8ea02e485c5ca5e849db1c9e8ded61c29db6f5a773cb`, created 2026-10-02 00:16:20+05:30, from `ubuntu:24.04` digest `sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3`.
 
 The final canonical command generated and validated 23 Compose load artifacts; the compact per-run counts and amplification are in `compose-artifact-summary.tsv`. It covered healthy and hedged baselines, an isolated straggler and three hedge delays, all-replica delay and recovery, transient UNAVAILABLE with retry off/on, retry-budget storm, non-idempotent behavior, cancellation-aware/ignoring backends, and short-deadline hedge suppression. All generator runs were reported unsaturated and artifact-valid.
 

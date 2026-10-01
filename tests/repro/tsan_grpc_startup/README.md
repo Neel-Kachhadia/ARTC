@@ -144,3 +144,5 @@ CMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer
 CMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
 TSAN_OPTIONS=halt_on_error=1:history_size=7
 ```
+
+The checked-in system TSan logs normalize machine-specific build paths to `<ARTC_WORKTREE>` for publication.

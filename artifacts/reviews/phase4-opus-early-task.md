@@ -40,7 +40,7 @@ Existing measured limits to preserve:
 - Phase 2 deadline feasibility did not improve goodput in the paired A2 workload and rejected no requests there. Phase 2 AIMD did not settle during the measured high-load window and showed oscillation; its return-to-baseline took 18.39 s.
 - Pinned gRPC improved sanitizer/reproducibility confidence at a measurable local RPC latency cost. No Phase 4 healthy-path claim should ignore that baseline or compare incompatible environments.
 
-Current execution environment has 32 CPUs, 7 GiB available RAM, GCC 13.3, Clang 18.1, CMake 3.28, and Docker Compose 2.40.3. From this Codex process, `whoami` is `neel`, the `/run/docker.sock` ACL includes `user:neel:rw-`, and sandboxed Docker calls receive API permission denied; the already-authorized per-command unsandboxed checks `docker ps` and `docker info >/dev/null && echo "CODEX DOCKER: PASS"` both succeed. No `sudo` or socket permission change was used. Continue Docker lab work through that supported scoped execution path.
+Docker lab commands succeeded without sudo in the host-capable execution context. No host socket or network permissions were changed. Continue Docker lab work through the supported scoped execution path.
 
 ## Draft risk-based validation plan
 

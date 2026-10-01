@@ -155,8 +155,7 @@ isolated, which limits causal interpretation of short performance trials.
   secondary selection.
 - **Regression:** `HedgeIsSuppressedWhenOnlyFastReplicaIsRecovering` asserts an
   overload denial, no hedge dispatch, and no hedge-token consumption.
-- **Evidence:** `artifacts/reviews/phase4-hedge-recovering-before-fix.log`,
-  `artifacts/reviews/phase4-p0-regressions-after-fix.log`, and
+- **Evidence:** `HedgeIsSuppressedWhenOnlyFastReplicaIsRecovering` in
   `tests/integration/attempt_management_test.cc`.
 
 ## Design evolution

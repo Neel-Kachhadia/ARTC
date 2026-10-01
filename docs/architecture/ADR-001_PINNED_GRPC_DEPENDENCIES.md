@@ -75,9 +75,10 @@ documented evidence and justification. No numeric latency tolerance is
 configured for the Phase 1 gate. This ADR records the pinned canonical healthy
 run as the Phase 1 reference for later comparisons and preserves the system
 stack comparison as historical evidence; it does not claim the latency cost
-is immaterial. The comparison and raw manifests are retained in
-`tests/repro/tsan_grpc_startup/evidence/pinned-benchmark-comparison.txt` and
-`artifacts/runs/`.
+is immaterial. The comparison summary is retained in
+`tests/repro/tsan_grpc_startup/evidence/pinned-benchmark-comparison.txt`.
+Raw Phase 1 run directories remain local and ignored under `artifacts/runs/`;
+they are not part of the public evidence package.
 
 ## Verification and limits
 
@@ -86,8 +87,9 @@ and TSan. ASan/UBSan and TSan each passed all 26 CTest cases; no TSan
 suppression or test exclusion was used. The canonical Compose run and all
 benchmark, readiness, targeted-fault, recovery, cleanup, CPU saturation,
 pause/resume, kill/restart, interrupted-run, repeated-startup, and artifact
-gates passed. Exact per-run evidence is retained under `artifacts/runs/` and
-`tests/repro/tsan_grpc_startup/evidence/`.
+gates passed. The retained TSan and benchmark evidence is under
+`tests/repro/tsan_grpc_startup/evidence/`. Full Phase 1 run directories remain
+local and ignored under `artifacts/runs/`.
 
 GCC 13.3 plus UBSan could not compile the pinned Abseil `flags/reflection.cc`
 constexpr path before reaching ARTC sources; the supported Clang sanitizer

@@ -109,11 +109,11 @@ deterministic callback-drain and dispatch-fence test controls, the final
 code-only gate passed at `396b7ba`: GCC Debug, GCC Release, and Clang each
 passed 93 CTest cases; targeted ASan/UBSan/LSan passed 42 and targeted TSan
 passed 44. The six directly affected callback, deadline, shutdown, and seeded
-race tests also passed in GCC Debug and under TSan. Logs are
-`artifacts/reviews/phase3-final-code-gate.log` and
-`artifacts/reviews/phase3-current-repair-tsan.log`. The test controls compile
-only into `artc_rpc_testing`; production builds use the standard steady clock
-and gRPC alarms. Runtime scenarios were not repeated after this test-only seam.
+race tests also passed in GCC Debug and under TSan. The retained Phase 3 test
+and scenario summary is `artifacts/reviews/phase3-evidence.txt`; raw build and
+test logs remain local and ignored. The test controls compile only into
+`artc_rpc_testing`; production builds use the standard steady clock and gRPC
+alarms. Runtime scenarios were not repeated after this test-only seam.
 The Phase 1 regression also passed. In the 450-request A2 straggler
 run, p99 fell from 154,367 us without hedging to 9,367 us at a 5 ms delay, with
 1.333 attempt amplification and 1.11 s aggregate wasted attempt time. Delays of
@@ -128,13 +128,14 @@ no extra attempts. Cancellation-aware and cancellation-ignoring backends
 completed 67 losing hedge handlers with 641 us and 9.36 s post-cancel work,
 respectively.
 
-The complete per-scenario results are under
-`artifacts/runs/phase3_20260930_160802_724820/`; the Phase 1 regression is under
-`artifacts/runs/phase1-regression-phase3-20260930/`. p999 was unavailable at
-these sample counts. Docker CPU/memory snapshots were captured around scenarios,
+The scenario results and Phase 1 regression are summarized in
+`artifacts/reviews/phase3-evidence.txt`; raw run directories remain local and
+ignored. p999 was unavailable at these sample counts. Docker CPU/memory
+snapshots were captured around scenarios,
 and two bounded 60-second resource samples were collected with the current
 Phase 3 binary. During 6,000 requests with 130 actual hedges, the analyzer
 captured 29 samples and passed its bounded-growth thresholds: router RSS rose
 1,612 KiB between first and last decile medians, FD and socket counts rose by
-two each, and thread count stayed at 21. The detailed measurements are under
-`artifacts/runs/phase3-resource-stability-hedge-20260930/phase2-soak/`.
+two each, and thread count stayed at 21. The measured summary is retained in
+`artifacts/reviews/phase3-evidence.txt`; raw soak directories remain local and
+ignored.

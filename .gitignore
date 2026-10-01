@@ -31,6 +31,9 @@ artifacts/raw/
 artifacts/runs/
 bench/results/local/
 
+# Generated Graphify output
+graphify-out/
+
 # IDE
 .vscode/
 .idea/
@@ -41,6 +44,9 @@ bench/results/local/
 *.tmp
 *.log
 .cache/
+
+# Superseded raw review transcript; the final disposition summary is retained.
+artifacts/reviews/phase3-opus-result.json
 
 # Curated TSan reproduction reports are versioned evidence, not temporary logs.
 !tests/repro/tsan_grpc_startup/evidence/*.log

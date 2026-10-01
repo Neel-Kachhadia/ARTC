@@ -110,9 +110,12 @@ invalid runs are retained but excluded from comparisons.
 
 Fast rejections can make a latency percentile look small. For example, with
 Service B slowed and 2,000 offered requests/s, the measured workload admitted
-3,378 of 40,000 scheduled calls and rejected 36,622. When all replicas were
-slow, 4,000 requests were rejected and goodput was zero. Those values describe
-load shedding and absent capacity, not successful fast service.
+3,378 of 40,000 scheduled calls and rejected 36,622. In the earlier
+all-replicas-slow trace, each replica had 150 ms egress delay and the caller
+deadline was 100 ms; all 4,000 requests were rejected before dispatch as
+`REJECT_DEADLINE_INFEASIBLE`. That demonstrates deadline-infeasibility
+shedding, not general absence of capacity. In the separate clean-checkout case,
+120 ms delay with a 5 s deadline admitted 50 of 50 sampled calls.
 
 ### What can you claim about p99 or p999?
 
@@ -171,23 +174,28 @@ isolated, which limits causal interpretation of short performance trials.
 
 - Built a C++23 unary-gRPC traffic layer with deadline-aware admission,
   adaptive replica routing, and idempotency-aware bounded retries/hedges;
-  completed 900,000 requests at 250 RPS in a one-hour healthy soak with zero
-  rejections and 1.00 attempt amplification.
+  completed 900,000 requests at 250 RPS in a one-hour single-attempt healthy
+  soak with zero rejections and 1.00 attempt amplification, while validating
+  retries and hedges separately with deterministic and short fault tests.
 - Built a scoped seeded Docker fault lab and deterministic lifecycle tests;
-  validated GCC/Clang builds, ASan/UBSan/LSan/TSan gates, 32 deterministic
+  validated GCC/Clang Debug/Release builds (98/98 tests each), focused
+  ASan/UBSan/LSan (47/47), targeted TSan (49/49), 32 deterministic
   state-sequence seeds, restart/recovery, and a 20-minute faulted soak while
   preserving invalid and unfavorable results.
 
 ## Evidence to open during an interview
 
 - Healthy soak manifest and resources:
-  `artifacts/runs/phase4_healthy_soak_20261001/phase2-soak/`
+  `artifacts/evidence/phase4/soaks/healthy/`
 - Faulted soak manifest and resources:
-  `artifacts/runs/phase4_faulted_soak_20261001/phase2-soak/`
+  `artifacts/evidence/phase4/soaks/faulted/`
 - Baseline, overload, recovery, and load-step runs:
-  `artifacts/runs/phase4_baseline_20261001/phase2/`
+  `artifacts/evidence/phase4/scenarios/`
 - Policy/ablation and focused control profile:
-  `artifacts/runs/phase4_ablation_20261001/phase2/`
+  `artifacts/evidence/phase4/benchmarks/` and
+  `artifacts/evidence/phase4/profiles/`
+- Fresh-checkout compiler, sanitizer, Compose, image, and cleanup record:
+  `artifacts/evidence/phase4/reproducibility/clean-checkout-validation.txt`
 - Explicit fault dispositions:
   `docs/failures/phase4_fault_coverage.csv`
 - PRR and requirement mapping:

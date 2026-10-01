@@ -1,0 +1,5 @@
+policy,target,offered_rps,duration_ms,scheduled,successful,p50_us,p95_us,p99_us,loadgen_cpu_seconds_per_completed_request,router_cpu_per_request,decision_sample_every,max_issue_lag_us,measurement_valid,source_manifest
+direct_a1,a1:50051,1000,15000,15000,15000,813,1178,1416,0.00029065047,not_measured,0,927,True,artifacts/runs/phase4_ablation_20261001/phase2/overhead-direct-a1/manifest.json
+round_robin,router:50050,1000,15000,15000,15000,1467,1826,11159,0.0003462454,not_measured,0,975,True,artifacts/runs/phase4_ablation_20261001/phase2/overhead-round-robin/manifest.json
+least_inflight,router:50050,1000,15000,15000,15000,1403,1800,7087,0.00034254107,not_measured,0,1038,True,artifacts/runs/phase4_ablation_20261001/phase2/overhead-phase1-least-inflight/manifest.json
+adaptive_selector,router:50050,1000,15000,15000,15000,1442,1850,14983,0.00035167067,not_measured,0,1347,True,artifacts/runs/phase4_ablation_20261001/phase2/overhead-phase2-adaptive/manifest.json

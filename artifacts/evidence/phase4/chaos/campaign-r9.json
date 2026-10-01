@@ -1,0 +1,39 @@
+{
+  "allowed_events": [
+    "dependency_slowdown",
+    "cpu",
+    "incident_load_cpu_dependency",
+    "incident_loss_unavailable_retry",
+    "pause_resume",
+    "dependency_restart",
+    "load_step",
+    "incident_straggler_hedge_deadline",
+    "incident_replica_recovery_spike",
+    "incident_global_slow_burst",
+    "latency",
+    "replica_flapping",
+    "router_restart",
+    "packet_loss",
+    "process_restart"
+  ],
+  "episodes": [
+    {
+      "deadline_ms": 5000,
+      "episode": 15,
+      "event": "process_restart",
+      "fault_parameters": {
+        "signal": "SIGKILL",
+        "target": "A2"
+      },
+      "hold_seconds": 3,
+      "initial_rate_rps": 100,
+      "mode": "constant",
+      "offered_rps": 100
+    }
+  ],
+  "first_episode": 15,
+  "last_episode": 15,
+  "prng": "SplitMix64/Fisher-Yates",
+  "schema": "artc-phase4-seeded-chaos-v1",
+  "seed": 20261001
+}

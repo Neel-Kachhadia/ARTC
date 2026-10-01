@@ -1,0 +1,54 @@
+{
+  "allowed_events": [
+    "dependency_slowdown",
+    "cpu",
+    "incident_load_cpu_dependency",
+    "incident_loss_unavailable_retry",
+    "pause_resume",
+    "dependency_restart",
+    "load_step",
+    "incident_straggler_hedge_deadline",
+    "incident_replica_recovery_spike",
+    "incident_global_slow_burst",
+    "latency",
+    "replica_flapping",
+    "router_restart",
+    "packet_loss",
+    "process_restart"
+  ],
+  "episodes": [
+    {
+      "deadline_ms": 5000,
+      "episode": 13,
+      "event": "router_restart",
+      "fault_parameters": {
+        "controller_state": "reinitialized",
+        "signal": "SIGKILL",
+        "target": "ARTC router"
+      },
+      "hold_seconds": 3,
+      "initial_rate_rps": 100,
+      "mode": "constant",
+      "offered_rps": 100
+    },
+    {
+      "deadline_ms": 10000,
+      "episode": 14,
+      "event": "packet_loss",
+      "fault_parameters": {
+        "deadline_ms": 10000,
+        "egress_loss_percent": 100,
+        "target": "A2"
+      },
+      "hold_seconds": 3,
+      "initial_rate_rps": 250,
+      "mode": "constant",
+      "offered_rps": 250
+    }
+  ],
+  "first_episode": 13,
+  "last_episode": 14,
+  "prng": "SplitMix64/Fisher-Yates",
+  "schema": "artc-phase4-seeded-chaos-v1",
+  "seed": 20261001
+}

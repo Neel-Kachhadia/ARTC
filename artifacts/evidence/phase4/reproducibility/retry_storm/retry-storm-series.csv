@@ -1,0 +1,5 @@
+interval,logical_rps,backend_attempt_rps,retry_rps,retry_budget_remaining,success_fraction,p99_us
+retry_storm,100.0,106.0,6.0,0,0.0,48319
+retry_storm-repeat2,100.0,100.0,0.0,0,0.0,25519
+retry_storm-repeat3,100.0,100.0,0.0,0,0.0,23647
+retry_storm-repeat4,100.0,100.0,0.0,0,0.0,24847

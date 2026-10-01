@@ -1,0 +1,10 @@
+policy,target,offered_rps,duration_ms,scheduled,successful,admitted,rejected,p50_us,p95_us,p99_us,backend_attempts,amp_per_admitted,hedge_attempts,retry_attempts,decision_samples,max_issue_lag_us,generator_saturated,measurement_valid,attempt_metadata_observed,trials,warmup,source_manifest
+direct-a1,a1:50051,1000,15000,15000,15000,,,813,1178,1416,,,,,0,927,False,True,False,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/direct-a1.json
+round_robin,router:50050,500,10000,5000,5000,5000,0,1590,1985,2189,5000,1,0,0,0,806,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/round_robin.json
+least_inflight,router:50050,500,10000,5000,5000,5000,0,1623,2033,2237,5000,1,0,0,0,1686,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/least_inflight.json
+ewma_latency,router:50050,500,10000,5000,5000,5000,0,1545,2003,2249,5000,1,0,0,0,885,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/ewma_latency.json
+p2c_latency_inflight,router:50050,500,10000,5000,5000,5000,0,1596,2031,2283,5000,1,0,0,0,624,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/p2c_latency_inflight.json
+artc_selector_only,router:50050,500,10000,5000,5000,5000,0,1443,1882,2163,5000,1,0,0,50,204,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/artc_selector_only.json
+adaptive_concurrency_only,router:50050,500,10000,5000,5000,5000,0,1620,2003,2239,5000,1,0,0,50,238,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/adaptive_concurrency_only.json
+artc_adaptive_no_deadline,router:50050,500,10000,5000,5000,5000,0,1588,2004,2951,5000,1,0,0,50,1018,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/artc_adaptive_no_deadline.json
+artc_adaptive,router:50050,500,10000,5000,5000,5000,0,1612,2000,2217,5000,1,0,0,50,1417,False,True,True,1,False,artifacts/evidence/phase4/benchmarks/policy-manifests/artc_adaptive.json

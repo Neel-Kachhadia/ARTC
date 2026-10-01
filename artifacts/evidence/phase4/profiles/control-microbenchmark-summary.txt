@@ -1,0 +1,11 @@
+ARTC focused release control microbenchmark
+Command: build/release/artc_control_bench --iterations 100000
+Source run: artifacts/evidence/phase4/profiles/control-measurements.json
+Observations per operation: 100000
+clock_pair: mean=415.96 ns; p50=410 ns; p95=442 ns; p99=512 ns
+selector: mean=2221.43 ns; p50=2228 ns; p95=2306 ns; p99=2354 ns
+admission: mean=1493.93 ns; p50=1483 ns; p95=1530 ns; p99=1564 ns
+snapshot_read: mean=587.95 ns; p50=580 ns; p95=611 ns; p99=642 ns
+controller_update: mean=26198.3 ns; p50=25796 ns; p95=27978 ns; p99=37026 ns
+Interpretation: focused microbenchmark timings, not end-to-end request overhead.
+Callgrind was also captured for the control path and a deterministic retry/deadline lifecycle test; raw profile dumps are omitted from the repository.

@@ -1,0 +1,16 @@
+episode,seed,event,fault_parameters,mode,initial_rate_rps,offered_rps,deadline_ms,hold_seconds,started_utc,recovered_utc,recovery_attempts,recovery_delay_sec,result,cleanup
+1,20261001,dependency_slowdown,"{""delay_us"": 100000, ""target"": ""Service B""}",constant,50,50,5000,3,2026-10-01T14:17:00Z,2026-10-01T14:17:20Z,1,2,PASS,verified
+2,20261001,cpu,"{""stress_workers"": 1, ""target"": ""A2""}",constant,100,100,5000,3,2026-10-01T14:17:21Z,2026-10-01T14:17:42Z,1,3,PASS,verified
+3,20261001,incident_load_cpu_dependency,"{""A2_stress_workers"": 1, ""Service_B_delay_us"": 100000, ""initial_rps"": 100, ""peak_rps"": 500}",step,100,500,5000,3,2026-10-01T14:17:42Z,2026-10-01T14:18:11Z,1,2,PASS,verified
+4,20261001,incident_loss_unavailable_retry,"{""A1_A2_A3_unavailable_first_n"": 100000, ""A2_egress_loss_percent"": 100, ""A3_process_restart_during_loss"": true, ""hedge_budget_capacity"": 8, ""initial_rps"": 100, ""peak_rps"": 500, ""retry_budget_capacity"": 8}",step,100,500,5000,3,2026-10-01T14:18:12Z,2026-10-01T14:18:41Z,1,2,PASS,verified
+5,20261001,pause_resume,"{""target"": ""A2""}",constant,100,100,5000,3,2026-10-01T14:18:42Z,2026-10-01T14:19:02Z,1,2,PASS,verified
+6,20261001,dependency_restart,"{""signal"": ""SIGKILL"", ""target"": ""Service B""}",constant,100,100,5000,3,2026-10-01T14:19:03Z,2026-10-01T14:19:23Z,1,2,PASS,verified
+7,20261001,load_step,"{""initial_rps"": 50, ""peak_rps"": 500}",step,50,500,5000,3,2026-10-01T14:19:24Z,2026-10-01T14:19:45Z,1,3,PASS,verified
+8,20261001,incident_straggler_hedge_deadline,"{""A2_delay_us"": 150000, ""deadline_ms"": 100, ""hedge_delay_us"": 20000, ""initial_rps"": 100, ""peak_rps"": 1000}",step,100,1000,100,3,2026-10-01T14:19:45Z,,,,FAIL,verified
+9,20261001,incident_replica_recovery_spike,"{""action"": ""kill_restart"", ""initial_rps"": 100, ""peak_rps"": 500, ""target"": ""A2""}",step,100,500,5000,3,,,,,pending,pending
+10,20261001,incident_global_slow_burst,"{""A1_A2_A3_delay_us"": 100000, ""initial_rps"": 100, ""peak_rps"": 500}",step,100,500,5000,3,,,,,pending,pending
+11,20261001,latency,"{""egress_delay_ms"": 75, ""target"": ""A2""}",constant,250,250,5000,3,,,,,pending,pending
+12,20261001,replica_flapping,"{""sequence"": [""slow"", ""healthy"", ""down"", ""healthy"", ""slow"", ""healthy""], ""slow_delay_us"": 120000, ""target"": ""A2""}",constant,50,50,5000,3,,,,,pending,pending
+13,20261001,router_restart,"{""controller_state"": ""reinitialized"", ""signal"": ""SIGKILL"", ""target"": ""ARTC router""}",constant,100,100,5000,3,,,,,pending,pending
+14,20261001,packet_loss,"{""egress_loss_percent"": 100, ""target"": ""A2""}",constant,250,250,5000,3,,,,,pending,pending
+15,20261001,process_restart,"{""signal"": ""SIGKILL"", ""target"": ""A2""}",constant,100,100,5000,3,,,,,pending,pending

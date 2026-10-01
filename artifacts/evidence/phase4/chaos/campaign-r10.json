@@ -1,0 +1,45 @@
+{
+  "allowed_events": [
+    "dependency_slowdown",
+    "cpu",
+    "incident_load_cpu_dependency",
+    "incident_loss_unavailable_retry",
+    "pause_resume",
+    "dependency_restart",
+    "load_step",
+    "incident_straggler_hedge_deadline",
+    "incident_replica_recovery_spike",
+    "incident_global_slow_burst",
+    "latency",
+    "replica_flapping",
+    "router_restart",
+    "packet_loss",
+    "process_restart"
+  ],
+  "episodes": [
+    {
+      "deadline_ms": 10000,
+      "episode": 4,
+      "event": "incident_loss_unavailable_retry",
+      "fault_parameters": {
+        "A1_A2_A3_unavailable_first_n": 100000,
+        "A2_egress_loss_percent": 100,
+        "A3_process_restart_during_loss": true,
+        "deadline_ms": 10000,
+        "hedge_budget_capacity": 8,
+        "initial_rps": 100,
+        "peak_rps": 500,
+        "retry_budget_capacity": 8
+      },
+      "hold_seconds": 3,
+      "initial_rate_rps": 100,
+      "mode": "step",
+      "offered_rps": 500
+    }
+  ],
+  "first_episode": 4,
+  "last_episode": 4,
+  "prng": "SplitMix64/Fisher-Yates",
+  "schema": "artc-phase4-seeded-chaos-v1",
+  "seed": 20261001
+}

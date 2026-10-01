@@ -1,0 +1,56 @@
+ARTC_ATTEMPT_SUMMARY logical_requests=200 logical_terminals=200 primary_attempts=200 hedge_attempts=67 retry_attempts=0 primary_wins=133 hedge_wins=67 retry_wins=0 cancelled_attempts=67 wasted_attempt_time_us=865752 censored_attempts=67 pending_backend_callbacks=0 hedge_dispatch_errors=0 attempt_amplification=1.335 hedge_budget_available=61 hedge_budget_consumed=67 hedge_budget_denied=0 hedge_no_target=0 hedge_attempt_limit=0 retry_budget_available=0 retry_budget_consumed=0 retry_budget_denied=0 retry_no_target=0 retry_attempt_limit=0 retry_same_replica=0 active_attempts=0
+# TYPE artc_logical_requests_total counter
+artc_logical_requests_total 200
+# TYPE artc_logical_terminal_transitions_total counter
+artc_logical_terminal_transitions_total 200
+# TYPE artc_backend_attempts_total counter
+# TYPE artc_attempt_completions_total counter
+# TYPE artc_winning_attempt_total counter
+artc_backend_attempts_total{kind="primary"} 200
+artc_attempt_completions_total{kind="primary"} 200
+artc_winning_attempt_total{kind="primary"} 133
+artc_backend_attempts_total{kind="hedge"} 67
+artc_attempt_completions_total{kind="hedge"} 67
+artc_winning_attempt_total{kind="hedge"} 67
+artc_backend_attempts_total{kind="retry"} 0
+artc_attempt_completions_total{kind="retry"} 0
+artc_winning_attempt_total{kind="retry"} 0
+# TYPE artc_attempt_cancellations_total counter
+artc_attempt_cancellations_total{reason="winner"} 67
+artc_attempt_cancellations_total{reason="deadline"} 0
+artc_attempt_cancellations_total{reason="caller"} 0
+artc_attempt_cancellations_total{reason="shutdown"} 0
+artc_attempt_cancellations_total{reason="internal"} 0
+# TYPE artc_hedges_total counter
+artc_hedges_total{result="started"} 67
+artc_hedges_total{result="budget_denied"} 0
+artc_hedges_total{result="deadline_denied"} 0
+artc_hedges_total{result="overload_denied"} 0
+artc_hedges_total{result="no_target"} 0
+artc_hedges_total{result="attempt_limit"} 0
+# TYPE artc_retries_total counter
+artc_retries_total{result="started"} 0
+artc_retries_total{result="budget_denied"} 0
+artc_retries_total{result="deadline_denied"} 0
+artc_retries_total{result="not_retryable"} 0
+artc_retries_total{result="no_target"} 0
+artc_retries_total{result="attempt_limit"} 0
+artc_retries_total{result="same_replica"} 0
+# TYPE artc_hedge_budget_available gauge
+artc_hedge_budget_available 61
+# TYPE artc_hedge_budget_consumed_total counter
+artc_hedge_budget_consumed_total 67
+# TYPE artc_hedge_budget_denied_total counter
+artc_hedge_budget_denied_total 0
+# TYPE artc_retry_budget_available gauge
+artc_retry_budget_available 0
+# TYPE artc_retry_budget_consumed_total counter
+artc_retry_budget_consumed_total 0
+# TYPE artc_retry_budget_denied_total counter
+artc_retry_budget_denied_total 0
+# TYPE artc_attempt_amplification gauge
+artc_attempt_amplification 1.335
+# TYPE artc_wasted_attempt_time_us counter
+artc_wasted_attempt_time_us 865752
+# TYPE artc_censored_attempts_total counter
+artc_censored_attempts_total 67

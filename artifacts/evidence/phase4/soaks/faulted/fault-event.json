@@ -1,0 +1,14 @@
+{
+  "schema": "artc-phase4-soak-fault-v1",
+  "run_id": "phase4_faulted_soak_20261001",
+  "seed": 20261001,
+  "event": "a2_egress_delay",
+  "target": "A2 eth0 egress",
+  "delay_ms": 75,
+  "scheduled_after_sec": 300,
+  "hold_sec": 60,
+  "status": "pass",
+  "cleanup": "verified",
+  "applied_utc": "2026-10-01T14:49:34.494170+00:00",
+  "recovered_utc": "2026-10-01T14:50:34.619332+00:00"
+}

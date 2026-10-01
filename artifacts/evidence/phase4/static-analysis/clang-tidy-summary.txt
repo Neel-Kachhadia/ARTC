@@ -1,0 +1,13 @@
+ARTC Phase 4 focused static analysis
+
+Command: clang-tidy -p build/debug --checks=clang-analyzer-*
+Files: src/app/services.cc, src/control/phase2.cc, src/routing/selector.cc,
+       tests/integration/attempt_management_test.cc
+Tool: Clang-Tidy 18.1.3
+Exit: 0
+
+Disposition: the selected checks emitted one diagnostic. One nonmaterial
+clang-analyzer-deadcode.DeadStores diagnostic remains at
+src/control/phase2.cc:648: `next` is initialized from `current`, then assigned in
+both branches before use. This is a dead initialization, not a correctness
+defect; it is left as optional cleanup in the frozen Phase 2 controller.

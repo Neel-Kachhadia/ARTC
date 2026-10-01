@@ -1,0 +1,1 @@
+ARTC_SERVICE_WORK_SUMMARY started=67 completed=67 cancellation_signals=67 completed_after_cancellation=67 post_cancel_work_time_us=9389720

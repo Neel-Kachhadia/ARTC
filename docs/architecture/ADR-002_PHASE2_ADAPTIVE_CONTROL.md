@@ -74,11 +74,11 @@ pause/resume, kill/restart, repeated startup, and interrupted-fault cleanup.
 The latest Phase 2 validation passed 44 CTest cases under GCC Debug, GCC
 Release, Clang, ASan/UBSan, LeakSanitizer, and TSan.
 
-The Phase 2 experiment bundle is
-`artifacts/runs/phase2-final-20260929-03/phase2/analysis.json`. It records the
-required A–J scenarios, 120-second load trace, A2 recovery trace, deadline
-comparison, eight selector/concurrency ablations, healthy-path overhead, and
-one-million-iteration control microbenchmark. The analyzer orders concurrent
+The raw Phase 2 experiment bundle remains local and ignored under
+`artifacts/runs/`; it is not part of the public evidence package. The results
+below are historical single-host measurements recorded here as an engineering
+summary. The later Phase 4 evidence under `artifacts/evidence/phase4/` is the
+canonical retained validation package. The analyzer ordered concurrent
 decision samples by monotonic elapsed time before calculating time-series
 metrics.
 
@@ -115,13 +115,14 @@ changes direction 38 times, and never remains within 10% through the end of
 the high-load phase. It returns to the 512 normal-load median in 18.39 s.
 This is measured oscillatory AIMD behavior, not a settling claim.
 
-The final-code 30-minute soak is
-`artifacts/runs/phase2-soak-final-20260929-01/phase2-soak`. It completes
-900,000 requests at 500 RPS with 900,000 deadline-goodput, zero errors,
-zero rejects, and one backend attempt per admitted request. Across 162 resource
-samples, FD, thread, socket, and PID counts stay flat after startup; median RSS
-changes by 808 KiB and container RSS by 1.125 MiB. The resource analyzer passes,
-records a maximum route inflight of 1, and reports zero dropped decision samples.
+The final-code 30-minute Phase 2 soak completed 900,000 requests at 500 RPS
+with 900,000 deadline-goodput, zero errors, zero rejects, and one backend
+attempt per admitted request. Across 162 resource samples, FD, thread, socket,
+and PID counts stayed flat after startup; median RSS changed by 808 KiB and
+container RSS by 1.125 MiB. The resource analyzer passed, recorded maximum
+route inflight of 1, and reported zero dropped decision samples. Its raw run
+directory remains local and ignored; these figures are preserved here as a
+historical summary, not as a separately reproducible public artifact.
 
 The measurements support the reduced Phase 2 gate. The deadline paired run
 does not show a benefit, and the overload trace does not settle; both remain

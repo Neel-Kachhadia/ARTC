@@ -1,0 +1,27 @@
+ARTC Phase 4 clean-checkout validation
+Date: 2026-10-02
+Base commit: f6d93491d056cd2b5931cb19cd5af0479f4ec4fe
+Result: PASS WITH LIMITATION (fresh isolated checkout; final Phase 4 test and validation-script edits were applied as a working-tree diff before the final run)
+
+The checkout and all build directories were created under a new temporary worktree; no existing project build tree or dependency cache was used. The two final diffs at the time of the full run were limited to: (1) widening the recovering-replica test's latency separation for sanitizer overhead and adding state diagnostics, and (2) running the TSan build under process-local `setarch -R` so its instrumented protoc can start on this Linux host. Final manifests correctly record `worktree_dirty=true` for those local diffs.
+
+Canonical command: `ARTC_BUILD_JOBS=2 ARTC_RUN_ID=phase4_clean_f6d9349_fix2 bash lab/run_phase3_gates.sh`
+Exit: 0 (`phase3_gates=pass`).
+
+Toolchain and tests:
+- GCC 13.3.0 Debug: 98/98 CTest passed.
+- GCC 13.3.0 Release: 98/98 CTest passed.
+- Clang 18.1.3 Debug: 98/98 CTest passed.
+- Clang 18.1.3 Release: 98/98 CTest passed.
+- ASan/UBSan with leak detection: focused lifecycle/budget/state suite 47/47 passed.
+- TSan: focused lifecycle/budget/state/controller-race suite 49/49 passed; build and test process use `setarch -R` (no host ASLR setting changed).
+
+Docker preflight succeeded without sudo in the host-capable execution context. Docker Engine was 29.1.3. Compose image `artc-phase1:local` inspected as `sha256:6169bae390f8c231b68d8ea02e485c5ca5e849db1c9e8ded61c29db6f5a773cb`, created 2026-10-02 00:16:20+05:30, from `ubuntu:24.04` digest `sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3`.
+
+The final canonical command generated and validated 23 Compose load artifacts; the compact per-run counts and amplification are in `compose-artifact-summary.tsv`. It covered healthy and hedged baselines, an isolated straggler and three hedge delays, all-replica delay and recovery, transient UNAVAILABLE with retry off/on, retry-budget storm, non-idempotent behavior, cancellation-aware/ignoring backends, and short-deadline hedge suppression. All generator runs were reported unsaturated and artifact-valid.
+
+Every case ran scoped qdisc cleanup and Compose project-removal assertions. A final host query found no containers or networks with the run's Compose prefix. The all-replica network-fault cleanup record is `all_replicas_slow/recovery-qdisc.txt` (empty after successful removal).
+
+Post-review canonical-runner correction: the full run had a preconfigured Debug build directory, so the documented command was not yet self-contained from a clean checkout. `lab/run_phase3_gates.sh` now runs `cmake --preset debug` before its Debug build. From this isolated checkout, the updated code-only runner then passed with exit 0: GCC Debug/Release 98/98 each, Clang Debug/Release 98/98 each, ASan/UBSan/LSan 47/47, and TSan 49/49 (`phase3_code_gates=pass`). The post-review CTest logs are in the temporary clean checkout and the concise gate result is retained here. An initial restricted-sandbox attempt failed 35 loopback gRPC tests with OS `Operation not permitted` while binding `127.0.0.1`; the same command passed in the host-capable context. No source/test changes were made for that environment failure. The previously completed Compose matrix is reused: the runner correction only adds the Debug configure step, and the Compose scenarios and cleanup logic are unchanged.
+
+Two initial clean-run failures were resolved before the final PASS: the recovering-replica test had a 20 ms cutoff while its sanitizer-instrumented fast-replica p95 was 30.7 ms; the fixture now uses a 60 ms target and 100 ms slow hold, passing five consecutive ASan repetitions and the full 47-test sanitizer subset. The first TSan build launched instrumented protoc with ASLR enabled and hit `unexpected memory mapping`; the script now applies the existing process-local `setarch -R` workaround to the build as well as tests. No production-code sanitizer finding resulted.

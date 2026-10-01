@@ -4,24 +4,34 @@
 
 Passing compilation and unit tests is not sufficient for ARTC. CI is organized by cost and confidence.
 
+The repository workflow in `.github/workflows/validation.yml` runs the
+non-privileged code gates and configuration matrix on pull requests and pushes:
+GCC/Clang Debug and Release, CTest unit/integration/lifecycle coverage, selected
+ASan/UBSan/LSan and targeted TSan. Its scheduled run adds the fixed-seed
+state-sequence campaign (300 seconds). Hosted CI does not run privileged netem,
+long soaks, or the full policy/fault matrix; those remain explicit local/manual
+release commands.
+
 ## 2. Presubmit / every PR
 
 Mandatory:
 
 ```text
-format/lint checks
-CMake configure + clean build
-warnings policy
-unit tests
-state-machine tests
-deterministic lifecycle race tests
-ASan/UBSan suite
-TSan targeted suite
-short fuzz smoke tests
-configuration-validation tests
-integration smoke test
-benchmark smoke test
+GCC Debug and Release builds + CTest
+Clang Debug and Release builds + CTest
+deterministic unit, integration, controller, attempt, timer, and shutdown tests
+selected ASan/UBSan/LSan tests
+targeted TSan tests
+31-case startup configuration validation
 ```
+
+`lab/run_phase3_gates.sh --code-only` is the workflow entry point. The default
+form also builds the Compose image and runs the short integration/attempt
+containment matrix for local release validation. CI currently does not run a
+Docker benchmark smoke test or privileged fault injection.
+
+The repository has no checked-in formatter configuration, so CI does not run
+`clang-format`; style-only reformatting is kept out of Phase 4 correctness work.
 
 No known sanitizer/race finding may be waived without a documented, narrowly scoped suppression and justification.
 
@@ -36,18 +46,16 @@ Where practical, test Debug and Release-like builds. Warnings are treated seriou
 
 ## 4. Nightly validation
 
-Nightly jobs run expensive suites:
+The scheduled workflow currently reruns the compiler/sanitizer/configuration
+presubmit, then runs:
 
 ```text
-longer fuzz campaigns
-full deterministic fault matrix
-selected pairwise fault combinations
-stress tests
-spike/controller-stability tests
-performance regression suite
-resource leak/churn tests
-multi-hour soak tier where infrastructure permits
+fixed-seed state-sequence campaign, capped at 300 seconds
 ```
+
+The broader deterministic fault, pairwise, chaos, stress, spike, resource
+churn, and performance suites are documented/manual release work; the hosted
+workflow does not claim to execute them.
 
 Failures retain artifacts automatically.
 
@@ -56,11 +64,10 @@ Failures retain artifacts automatically.
 Before tagged releases or at a lower cadence:
 
 ```text
-6h/12h/24h soak
-large-sample p999 benchmark scenarios
-full recovery suite
-broader compiler/dependency matrix
-clean-machine reproducibility run
+one-hour healthy and bounded faulted soaks, when required by release risk
+selected recovery, stress, spike, oscillation, and seeded chaos scenarios
+canonical baseline and ablation matrix with limitations retained
+fresh-checkout configure/build/test/Compose validation
 ```
 
 ## 6. Benchmark regression policy
@@ -103,18 +110,18 @@ A release candidate is blocked unless:
 3. UBSan clean;
 4. TSan clean;
 5. leak/resource checks clean;
-6. required fuzz duration completes without unresolved crash;
-7. full documented single-fault catalog passes;
-8. required compound scenarios pass;
+6. bounded fuzz duration completes without unresolved crash;
+7. every modeled fault row is reconciled; required supported cases pass and NOT RUN stays explicit;
+8. risk-selected compound scenarios pass or retain a documented limitation;
 9. retry amplification bound is experimentally verified;
 10. hedge amplification bound is experimentally verified;
 11. non-idempotent safety tests pass;
 12. deadline propagation/invariants pass;
 13. recovery suite passes;
 14. graceful shutdown suite passes;
-15. telemetry-outage suite passes;
-16. canonical benchmark suite is reproducible;
-17. clean-machine build/run succeeds;
+15. telemetry outage is tested where a remote sink exists, otherwise marked not applicable;
+16. canonical benchmark artifacts are valid and claims match sample/repetition limits;
+17. fresh-checkout build/run succeeds and records source/image provenance;
 18. known limitations are documented;
 19. raw result artifacts are retained;
 20. interview evidence pack is synchronized with actual implementation/results.

@@ -1,0 +1,13 @@
+{
+  "success": false,
+  "inference_attempted": true,
+  "subscription_type": "pro",
+  "error": "timeout",
+  "completion": "unknown",
+  "role": "sonnet",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "provider": "firstParty",
+  "timestamp": "2026-10-01T12:34:45.433608+00:00",
+  "replayed": false
+}

@@ -52,11 +52,14 @@ completion, cancellation, deadlines, and shutdown must share one authority.
   informs routing and overload checks without claiming the
   canceled RPC's full duration. Wasted attempt time includes loser execution
   before logical completion and local callback drain after it.
-- Phase 2's move-only admission permit remains one permit per logical request
-  and is held until every dispatched local backend reactor reaches `OnDone`,
-  even if a winner has already completed the external RPC. This deliberately
-  counts loser drain in route inflight and bounds local active backend calls by
-  `max_active_attempts * route admission limit`; it avoids adding a second
+- Phase 2's move-only admission permit remains one permit per logical request.
+  A dispatched attempt keeps it held until that attempt's `OnDone` enters
+  `backend_done()` and its manager accounting completes. The final callback
+  releases the permit inside that accounting path, before its remaining local
+  cleanup and callback destruction. Thus it counts backend-attempt completion
+  and state accounting in route inflight, not the entire gRPC callback tail.
+  This bounds active local backend calls by
+  `max_active_attempts * route admission limit` without adding another
   concurrency controller. Each attempt owns its own `ReplicaLease` until its
   callback accounts exactly once. Best-effort cancellation does not prove a
   remote server stopped work.
@@ -72,8 +75,10 @@ completion, cancellation, deadlines, and shutdown must share one authority.
   the pending callback count remains visible in the summary.
 - Caller cancellation, deadline, or server shutdown terminalizes the logical
   request immediately and cancels timers/attempts best effort. The route permit
-  is released only after outstanding client callbacks drain. A cancellation-
-  ignoring backend may continue remote work; the lab measures that separately.
+  is released after every dispatched attempt has entered and completed manager
+  accounting in `OnDone`; local callback-tail cleanup may still be in progress.
+  A cancellation-ignoring backend may continue remote work; the lab measures
+  that separately.
 
 ## Alternatives considered
 
@@ -90,9 +95,10 @@ completion, cancellation, deadlines, and shutdown must share one authority.
 
 ## Tradeoffs and evidence
 
-Holding the logical permit through loser drain may conservatively delay new
-admission when a local gRPC callback is slow. Tests and experiments must measure
-that cost alongside backend attempt amplification. Cancellation remains
+Holding the logical permit until attempt accounting may conservatively delay
+new admission when a dispatched backend callback has not entered `OnDone`.
+The cost of the remaining callback tail is not independently measured.
+Cancellation remains
 best-effort across the RPC boundary; no client-side state can prove that a
 remote cancellation-ignoring handler stopped consuming CPU.
 
@@ -103,11 +109,11 @@ deterministic callback-drain and dispatch-fence test controls, the final
 code-only gate passed at `396b7ba`: GCC Debug, GCC Release, and Clang each
 passed 93 CTest cases; targeted ASan/UBSan/LSan passed 42 and targeted TSan
 passed 44. The six directly affected callback, deadline, shutdown, and seeded
-race tests also passed in GCC Debug and under TSan. Logs are
-`artifacts/reviews/phase3-final-code-gate.log` and
-`artifacts/reviews/phase3-current-repair-tsan.log`. The test controls compile
-only into `artc_rpc_testing`; production builds use the standard steady clock
-and gRPC alarms. Runtime scenarios were not repeated after this test-only seam.
+race tests also passed in GCC Debug and under TSan. The retained Phase 3 test
+and scenario summary is `artifacts/reviews/phase3-evidence.txt`; raw build and
+test logs remain local and ignored. The test controls compile only into
+`artc_rpc_testing`; production builds use the standard steady clock and gRPC
+alarms. Runtime scenarios were not repeated after this test-only seam.
 The Phase 1 regression also passed. In the 450-request A2 straggler
 run, p99 fell from 154,367 us without hedging to 9,367 us at a 5 ms delay, with
 1.333 attempt amplification and 1.11 s aggregate wasted attempt time. Delays of
@@ -122,13 +128,14 @@ no extra attempts. Cancellation-aware and cancellation-ignoring backends
 completed 67 losing hedge handlers with 641 us and 9.36 s post-cancel work,
 respectively.
 
-The complete per-scenario results are under
-`artifacts/runs/phase3_20260930_160802_724820/`; the Phase 1 regression is under
-`artifacts/runs/phase1-regression-phase3-20260930/`. p999 was unavailable at
-these sample counts. Docker CPU/memory snapshots were captured around scenarios,
+The scenario results and Phase 1 regression are summarized in
+`artifacts/reviews/phase3-evidence.txt`; raw run directories remain local and
+ignored. p999 was unavailable at these sample counts. Docker CPU/memory
+snapshots were captured around scenarios,
 and two bounded 60-second resource samples were collected with the current
 Phase 3 binary. During 6,000 requests with 130 actual hedges, the analyzer
 captured 29 samples and passed its bounded-growth thresholds: router RSS rose
 1,612 KiB between first and last decile medians, FD and socket counts rose by
-two each, and thread count stayed at 21. The detailed measurements are under
-`artifacts/runs/phase3-resource-stability-hedge-20260930/phase2-soak/`.
+two each, and thread count stayed at 21. The measured summary is retained in
+`artifacts/reviews/phase3-evidence.txt`; raw soak directories remain local and
+ignored.

@@ -21,6 +21,7 @@ OUT_ROOT="$ROOT/artifacts/runs/$BASE"
 mkdir -p "$OUT_ROOT"
 COMPOSE_FILE="$ROOT/lab/compose.yaml"
 CURRENT_PROJECT=""
+FAULT_SERVICES=()
 LOAD_DEADLINE_MS=5000
 LOAD_DEPENDENCY=false
 
@@ -28,11 +29,56 @@ compose() {
   docker compose -f "$COMPOSE_FILE" -p "$CURRENT_PROJECT" "$@"
 }
 
+assert_no_netem() {
+  local service container_id queues
+  for service in service-b a1 a2 a3; do
+    container_id="$(compose ps -q "$service")"
+    [[ -n "$container_id" ]] || continue
+    queues="$(compose exec -T "$service" tc qdisc show dev eth0)"
+    if grep -Eq '(^|[[:space:]])netem([[:space:]]|$)' <<<"$queues"; then
+      echo "unexpected netem qdisc on scoped target $service" >&2
+      return 1
+    fi
+  done
+}
+
+clear_faults() {
+  local service queues result=0
+  for service in "${FAULT_SERVICES[@]}"; do
+    if ! compose exec -T "$service" tc qdisc del dev eth0 root >/dev/null; then
+      echo "failed to remove netem from scoped target $service" >&2
+      result=1
+      continue
+    fi
+    if ! queues="$(compose exec -T "$service" tc qdisc show dev eth0)"; then
+      echo "could not verify qdisc cleanup on scoped target $service" >&2
+      result=1
+    elif grep -Eq '(^|[[:space:]])netem([[:space:]]|$)' <<<"$queues"; then
+      echo "netem remains on scoped target $service" >&2
+      result=1
+    fi
+  done
+  if ((result == 0)); then FAULT_SERVICES=(); fi
+  assert_no_netem || result=1
+  return "$result"
+}
+
+assert_project_removed() {
+  local remaining
+  remaining="$(docker ps --all --quiet --filter "label=com.docker.compose.project=$CURRENT_PROJECT")" || return 1
+  if [[ -n "$remaining" ]]; then
+    echo "Compose project containers remain after cleanup: $CURRENT_PROJECT" >&2
+    return 1
+  fi
+}
+
 cleanup() {
   local result=$?
   trap - EXIT
   if [[ -n "$CURRENT_PROJECT" ]]; then
+    clear_faults || result=1
     docker compose -f "$COMPOSE_FILE" -p "$CURRENT_PROJECT" down --remove-orphans || result=1
+    assert_project_removed || result=1
   fi
   exit "$result"
 }
@@ -127,8 +173,14 @@ run_case() {
   export COMPOSE_PROJECT_NAME="$CURRENT_PROJECT"
   export ARTC_RUN_ID="$BASE-$label"
   export ARTC_WORKTREE_DIRTY=true
+  FAULT_SERVICES=()
+  if [[ -n "$(docker ps --all --quiet --filter "label=com.docker.compose.project=$CURRENT_PROJECT")" ]]; then
+    echo "refusing to reuse a non-empty Compose project: $CURRENT_PROJECT" >&2
+    return 1
+  fi
   mkdir -p "$OUT_ROOT/$label"
   compose up -d --wait --wait-timeout 90
+  assert_no_netem
   compose run --rm --no-deps loadgen --health --target router:50050 \
     >"$OUT_ROOT/$label-health.txt"
   if ((warmup_ms > 0)); then
@@ -140,7 +192,8 @@ run_case() {
     all-netem)
       for service in a1 a2 a3; do
         compose exec -T "$service" tc qdisc add dev eth0 root netem delay 120ms
-        compose exec -T "$service" tc qdisc show dev eth0
+        FAULT_SERVICES+=("$service")
+        compose exec -T "$service" tc qdisc show dev eth0 | grep -q netem
       done >"$OUT_ROOT/$label-network-fault.txt"
       ;;
     *) echo "unknown fault: $fault" >&2; return 2 ;;
@@ -155,13 +208,11 @@ run_case() {
   done
 
   if [[ "$fault" == all-netem ]]; then
-    for service in a1 a2 a3; do
-      compose exec -T "$service" tc qdisc del dev eth0 root
-      compose exec -T "$service" tc qdisc show dev eth0
-    done >"$OUT_ROOT/$label/recovery-qdisc.txt"
+    clear_faults >"$OUT_ROOT/$label/recovery-qdisc.txt"
     run_load "$label-recovery" 1000 100 false
   fi
 
+  clear_faults
   compose stop -t 8
   compose logs --no-color >"$OUT_ROOT/$label/compose.log"
   compose logs --no-color --no-log-prefix router \
@@ -172,6 +223,7 @@ run_case() {
       >"$OUT_ROOT/$label/$service-work-summary.txt" || true
   done
   compose down --remove-orphans
+  assert_project_removed
   CURRENT_PROJECT=""
 }
 
@@ -180,6 +232,7 @@ python3 -m py_compile lab/validate_artifacts.py
 docker compose -f "$COMPOSE_FILE" config --quiet
 git diff --check
 
+cmake --preset debug
 cmake --build build/debug -j"$JOBS"
 ctest --test-dir build/debug --output-on-failure
 
@@ -216,6 +269,12 @@ cmake -S . -B build/phase3-clang -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 cmake --build build/phase3-clang -j"$JOBS"
 ctest --test-dir build/phase3-clang --output-on-failure
 
+cmake -S . -B build/phase4-clang-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  "${FETCH_SOURCE_ARGS[@]}"
+cmake --build build/phase4-clang-release -j"$JOBS"
+ctest --test-dir build/phase4-clang-release --output-on-failure
+
 cmake -S . -B build/phase2-asan-ubsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
   -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
@@ -229,7 +288,8 @@ cmake -S . -B build/phase2-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON -DCMAKE_C_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
   -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
   -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread' "${FETCH_SOURCE_ARGS[@]}"
-cmake --build build/phase2-tsan -j"$JOBS"
+# TSan-instrumented protoc needs ASLR disabled for this process tree on Linux.
+setarch "$(uname -m)" -R cmake --build build/phase2-tsan -j"$JOBS"
 setarch "$(uname -m)" -R ctest --test-dir build/phase2-tsan --output-on-failure \
   -R 'AttemptManagerIntegrationTest|AttemptBudgetTest|AttemptPolicyOnly|ControllerRaceTest'
 
@@ -322,8 +382,33 @@ PY
 
 configure_defaults
 export ARTC_ROUTING_POLICY=adaptive_concurrency_only ARTC_SERVICE_A1_UNAVAILABLE_FIRST_N=30
+set_method idempotent false false 1 0 10000 0 32
+run_case transient_unavailable_retry_off none true 2000 100 0 1
+
+configure_defaults
+export ARTC_ROUTING_POLICY=adaptive_concurrency_only ARTC_SERVICE_A1_UNAVAILABLE_FIRST_N=30
 set_method idempotent false true 2 1 10000 0 32
 run_case transient_unavailable none true 2000 100 0 1
+python3 - "$OUT_ROOT/transient_unavailable_retry_off/manifest.json" \
+  "$OUT_ROOT/transient_unavailable/manifest.json" \
+  >"$OUT_ROOT/retry-ablation.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+off, on = (json.loads(Path(path).read_text()) for path in sys.argv[1:])
+if off["attempt_amplification_per_admitted"] != 1.0:
+    raise SystemExit(f"retry-off path amplified attempts: {off}")
+if on["retry_attempts"] <= 0 or on["attempt_amplification_per_admitted"] <= 1.0:
+    raise SystemExit(f"retry-on path did not retry the transient failure: {on}")
+print(json.dumps({
+    "retry_off": {"errors": off["errors"], "backend_attempts": off["backend_attempts"],
+                  "attempt_amplification": off["attempt_amplification_per_admitted"]},
+    "retry_on": {"errors": on["errors"], "backend_attempts": on["backend_attempts"],
+                 "retry_attempts": on["retry_attempts"],
+                 "attempt_amplification": on["attempt_amplification_per_admitted"]},
+}, indent=2, sort_keys=True))
+PY
 
 configure_defaults
 export ARTC_ROUTING_POLICY=adaptive_concurrency_only

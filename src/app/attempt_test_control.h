@@ -28,6 +28,7 @@ enum class Checkpoint : std::uint8_t {
   kInsideDispatchFence,
   kShutdownFenceContended,
   kShutdownFenceClosed,
+  kBackendDoneEntry,
 };
 
 struct AttemptControl {

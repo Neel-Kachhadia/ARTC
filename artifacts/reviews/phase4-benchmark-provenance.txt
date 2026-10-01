@@ -1,0 +1,25 @@
+Phase 4 benchmark provenance review (post hoc)
+Date: 2026-10-01
+
+Historical manifests record base git SHA
+15d08f409f58577e2611c106302368d69327eeb8 and `worktree_dirty=true`. Their
+manifest does not contain an image ID or dirty-tree hash, so the SHA alone is
+not exact source provenance.
+
+The current `artc-phase1:local` tag inspected at review time resolved to
+sha256:688e06686cdb1f918baaf60a12505cf92518b7a2b28862a70857740b38ca3613,
+created 2026-10-01 17:51:56 +05:30. The Phase 4 runtime source files
+`include/artc/control/phase2.h`, `include/artc/rpc/attempt_budget.h`,
+`src/app/lab_main.cc`, `src/app/services.cc`, and `src/control/phase2.cc` had
+modification times between 17:40 and 17:42 +05:30. The earliest retained
+Phase 4 healthy soak began at 18:10 +05:30; the faulted soak, baseline, and
+ablation began later. The runner only inspects the mutable image tag and does
+not rebuild or record the resolved image ID in each run. These facts are
+consistent with the inspected image having served those runs, but they do not
+prove the per-run image binding. No exact dirty-diff hash was saved at run time.
+
+Disposition: preserve the soak/resource evidence as authorized by the Phase 4
+session and keep all short-run policy results descriptive. Do not make a causal
+performance claim from those historical runs. The clean-checkout validation
+run records its clean commit SHA and the image ID/creation metadata alongside
+the run artifacts to provide exact provenance going forward.

@@ -248,6 +248,12 @@ TEST(ControllerConfigTest, RejectsInvalidLimitsRatesDurationsAndNonFiniteValues)
   config.aimd.control_interval = 0ms;
   EXPECT_THROW(validate(config), std::invalid_argument);
   config = test_config();
+  config.aimd.max_limit = artc::control::kHardMaxRouteConcurrency + 1U;
+  EXPECT_THROW(validate(config), std::invalid_argument);
+  config = test_config();
+  config.aimd.control_interval = 24h + 1ms;
+  EXPECT_THROW(validate(config), std::invalid_argument);
+  config = test_config();
   config.aimd.initial_limit = config.aimd.max_limit + 1;
   EXPECT_THROW(validate(config), std::invalid_argument);
   config = test_config();
@@ -267,6 +273,12 @@ TEST(ControllerConfigTest, RejectsInvalidLimitsRatesDurationsAndNonFiniteValues)
   EXPECT_THROW(validate(config), std::invalid_argument);
   config = test_config();
   config.default_deadline = 0ms;
+  EXPECT_THROW(validate(config), std::invalid_argument);
+  config = test_config();
+  config.default_deadline = 24h + 1ms;
+  EXPECT_THROW(validate(config), std::invalid_argument);
+  config = test_config();
+  config.deadline_safety_margin = 24h + 1us;
   EXPECT_THROW(validate(config), std::invalid_argument);
   config = test_config();
   config.recovery_probe_period = 0;
@@ -584,6 +596,14 @@ TEST(AttemptBudgetTest, HedgeAndRetryBudgetsHaveIndependentCapacityAndCounters) 
                     .refill_per_second = std::numeric_limits<double>::infinity()},
                    start),
                std::invalid_argument);
+}
+
+TEST(AttemptBudgetTest, RejectsExcessiveCapacity) {
+  EXPECT_THROW(
+      artc::rpc::HedgeBudget(
+          {.capacity = artc::rpc::kHardMaxAttemptBudgetCapacity + 1U,
+           .refill_per_second = 0.0}),
+      std::invalid_argument);
 }
 
 TEST(AttemptBudgetTest, LargeClockJumpSaturatesWithoutDurationSubtractionOverflow) {

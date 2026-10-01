@@ -272,6 +272,10 @@ def analyze(root: Path) -> dict:
         "ablation_subset": ablations,
         "healthy_overhead": overhead,
         "control_microbenchmark": microbench,
+        "phase3_full_policy_straggler": run_summary(
+            *load_run(root, "phase3-full-policy-straggler")),
+        "phase3_full_policy_recovery": run_summary(
+            *load_run(root, "phase3-full-policy-recovery")),
         "required_scenarios": {
             name: run_summary(*load_run(root, name)) for name in (
                 "A-healthy", "B-a2-straggler", "C-a2-cpu-saturation",

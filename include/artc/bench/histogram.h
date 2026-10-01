@@ -10,7 +10,7 @@ struct hdr_histogram;
 
 namespace artc::bench {
 
-inline constexpr std::uint64_t kP999MinimumSamples = 100'000;
+inline constexpr std::uint64_t kP999MinimumSamples = 1'000'000;
 
 struct HistogramSummary {
   std::uint64_t sample_count{0};

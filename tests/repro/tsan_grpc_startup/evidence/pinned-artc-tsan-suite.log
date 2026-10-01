@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/neel/Projects/ARTC-SWE/ARTC/build/pinned-tsan
-Test project /home/neel/Projects/ARTC-SWE/ARTC/build/pinned-tsan
+Internal ctest changing into directory: <ARTC_WORKTREE>/build/pinned-tsan
+Test project <ARTC_WORKTREE>/build/pinned-tsan
       Start  1: SelectorTest.RoundRobinSequenceAndCounterWrap
  1/26 Test  #1: SelectorTest.RoundRobinSequenceAndCounterWrap .............................   Passed    0.04 sec
       Start  2: SelectorTest.LeastInflightUsesStableTieBreakAndExactLeases

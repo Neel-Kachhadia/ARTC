@@ -140,14 +140,16 @@ void validate(const ControllerConfig& config) {
   const auto& aimd = config.aimd;
   const auto& health = config.health;
   if (aimd.min_limit == 0 || aimd.max_limit < aimd.min_limit ||
+      aimd.max_limit > kHardMaxRouteConcurrency ||
       aimd.initial_limit < aimd.min_limit || aimd.initial_limit > aimd.max_limit) {
-    throw std::invalid_argument("invalid AIMD concurrency limits");
+    throw std::invalid_argument("invalid or excessive AIMD concurrency limits");
   }
   if (aimd.additive_increase == 0 || !std::isfinite(aimd.multiplicative_decrease) ||
       aimd.multiplicative_decrease <= 0.0 || aimd.multiplicative_decrease >= 1.0) {
     throw std::invalid_argument("invalid AIMD increase or decrease factor");
   }
   if (aimd.control_interval <= std::chrono::milliseconds::zero() ||
+      aimd.control_interval > std::chrono::hours(24) ||
       aimd.minimum_window_samples == 0 || aimd.target_latency <= std::chrono::microseconds::zero() ||
       !std::isfinite(aimd.overload_error_fraction) || aimd.overload_error_fraction <= 0.0 ||
       aimd.overload_error_fraction > 1.0) {
@@ -165,7 +167,9 @@ void validate(const ControllerConfig& config) {
   if (!std::isfinite(config.latency_ewma_smoothing) ||
       config.latency_ewma_smoothing <= 0.0 || config.latency_ewma_smoothing > 1.0 ||
       config.deadline_safety_margin < std::chrono::microseconds::zero() ||
+      config.deadline_safety_margin > std::chrono::hours(24) ||
       config.default_deadline <= std::chrono::milliseconds::zero() ||
+      config.default_deadline > std::chrono::hours(24) ||
       !std::isfinite(config.cold_start_latency_us) || config.cold_start_latency_us <= 0.0 ||
       config.cold_start_latency_us > 60'000'000.0 ||
       config.recovery_probe_period == 0) {

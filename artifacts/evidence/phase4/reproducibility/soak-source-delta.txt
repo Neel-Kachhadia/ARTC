@@ -1,0 +1,32 @@
+Source provenance comparison for the healthy and faulted soak manifests
+
+Soak manifests:
+- source revision: 15d08f409f58577e2611c106302368d69327eeb8
+- worktree_dirty: true
+- historical working-tree diff: not recorded; the exact dirty binary cannot be reconstructed
+
+Comparison point:
+- final short clean-checkout validation base: f6d93491d056cd2b5931cb19cd5af0479f4ec4fe
+- command: git diff --stat 15d08f409f58577e2611c106302368d69327eeb8..f6d93491d056cd2b5931cb19cd5af0479f4ec4fe -- src
+
+ src/app/attempt_test_control.h |  1 +
+ src/app/lab_main.cc            | 40 ++++++++++++++++++++++++++++
+ src/app/services.cc            | 62 ++++++++++++++++++++++++++++++++++++++++--
+ src/control/phase2.cc          |  6 +++-
+ 4 files changed, 105 insertions(+), 4 deletions(-)
+
+Relevant tracked changes in that range:
+- Router startup rejects unknown ARTC_* environment names and invalid backend addresses.
+- Controller validation adds hard upper bounds for concurrency and time settings.
+- Hedge overload accounting now considers Healthy replicas only; the soak policy
+  disabled hedging, so this predicate was not exercised by either soak.
+- A callback-entry checkpoint is compiled only with test hooks.
+- The p999 publication threshold also changed in include/artc/bench/histogram.h
+  and src/bench/histogram.cc; this affects reporting, not request/resource work.
+
+The soak manifests record normal accepted endpoints/settings and a single
+non-idempotent attempt policy. This comparison supports keeping the runs as
+Phase 4 resource evidence for that workload, but the unrecorded dirty source
+diff prevents claiming exact final-SHA binary reproduction. The final
+clean-checkout command separately rebuilt and checked the short f6d9349 suite;
+the one-hour and 20-minute soaks were not repeated.

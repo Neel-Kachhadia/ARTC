@@ -5,6 +5,7 @@
 #endif
 
 #include <algorithm>
+#include <arpa/inet.h>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -92,6 +93,57 @@ const char* health_name(routing::HealthState health) noexcept {
     case routing::HealthState::kUnavailable: return "unavailable";
   }
   return "unknown";
+}
+
+bool valid_backend_address(std::string_view address) {
+  std::string_view host;
+  std::string_view port_text;
+  if (address.starts_with('[')) {
+    const auto close = address.find(']');
+    if (close == std::string_view::npos || close == 1 ||
+        close + 2 >= address.size() || address[close + 1] != ':') {
+      return false;
+    }
+    const std::string ipv6(address.substr(1, close - 1));
+    in6_addr parsed{};
+    if (::inet_pton(AF_INET6, ipv6.c_str(), &parsed) != 1) return false;
+    port_text = address.substr(close + 2);
+  } else {
+    const auto separator = address.rfind(':');
+    if (separator == std::string_view::npos || separator == 0 ||
+        separator + 1 == address.size() ||
+        address.find(':') != separator) {
+      return false;
+    }
+    host = address.substr(0, separator);
+    bool at_label_start = true;
+    char previous = '\0';
+    for (char character : host) {
+      const bool alpha_numeric =
+          (character >= 'a' && character <= 'z') ||
+          (character >= 'A' && character <= 'Z') ||
+          (character >= '0' && character <= '9');
+      if (character == '.') {
+        if (at_label_start || previous == '-') return false;
+        at_label_start = true;
+      } else if (character == '-') {
+        if (at_label_start) return false;
+        at_label_start = false;
+      } else if (alpha_numeric) {
+        at_label_start = false;
+      } else {
+        return false;
+      }
+      previous = character;
+    }
+    if (at_label_start || host.back() == '-') return false;
+    port_text = address.substr(separator + 1);
+  }
+  std::uint32_t port = 0;
+  const auto [end, error] =
+      std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+  return error == std::errc{} && end == port_text.data() + port_text.size() &&
+         port > 0 && port <= 65'535;
 }
 
 gpr_timespec monotonic_deadline(std::chrono::microseconds delay) {
@@ -454,8 +506,9 @@ struct RouterService::State : public std::enable_shared_from_this<RouterService:
       }
     }
     for (auto& replica_config : configs) {
-      if (replica_config.id.empty() || replica_config.address.empty()) {
-        throw std::invalid_argument("replica id and address must be non-empty");
+      if (replica_config.id.empty() || !valid_backend_address(replica_config.address)) {
+        throw std::invalid_argument(
+            "replica id and address must be valid; address must be host:port");
       }
       if (std::any_of(backends.begin(), backends.end(), [&](const Backend& backend) {
             return backend.state->id == replica_config.id ||
@@ -831,6 +884,9 @@ class AttemptManager final : public CompletionState {
 
   void backend_done(const std::shared_ptr<BackendAttempt>& attempt,
                     const grpc::Status& status) noexcept {
+#if defined(ARTC_ENABLE_TEST_HOOKS)
+    checkpoint(testing::Checkpoint::kBackendDoneEntry, attempt->kind);
+#endif
     const auto now = owner_->now();
     CompletionPlan plan;
     control::RequestOutcome attempt_outcome = control::RequestOutcome::kFailure;
@@ -1157,7 +1213,7 @@ class AttemptManager final : public CompletionState {
         owner_->controller->config().health.minimum_latency_samples;
     bool observed_latency = false;
     for (const auto& replica : snapshot->replicas) {
-      if (replica.health == routing::HealthState::kUnavailable) continue;
+      if (replica.health != routing::HealthState::kHealthy) continue;
       double estimate = replica.latency_p95_us > 0.0
                             ? replica.latency_p95_us
                             : replica.latency_ewma_us;

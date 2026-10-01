@@ -20,6 +20,9 @@ CMakeCache.txt
 # Git internals
 .git/
 
+# Graphify outputs
+graphify-out/
+
 # Temporary/cache files
 .cache/
 __pycache__/

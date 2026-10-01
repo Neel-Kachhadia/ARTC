@@ -1,0 +1,3 @@
+phase4_config_matrix=pass
+rejected_cases=31
+default_startup=pass

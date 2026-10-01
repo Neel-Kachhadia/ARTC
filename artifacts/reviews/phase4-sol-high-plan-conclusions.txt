@@ -1,0 +1,67 @@
+Sol High read-only review of the proposed Phase 4 validation plan
+
+Disposition: use a bounded, risk-based execution set; do not claim that every
+item in the broader fault catalog passed. Every catalog item needs PASS, FAIL,
+NOT APPLICABLE with a reason, or NOT RUN with an exact reason.
+
+Material plan adjustments:
+
+1. One AttemptManager cannot have an active hedge and pending retry at once:
+   retries are scheduled only after active attempts reach zero. Exercise the
+   shutdown compound as concurrent logical-request cohorts; do not describe it
+   as one request state.
+2. Retain packet loss + backend restart (mandatory compound C-011) as one short
+   bounded recovery experiment or mark it NOT RUN. Distinguish TCP loss from
+   injected application UNAVAILABLE because loss may cause deadlines without a
+   retryable gRPC status.
+3. Include overload + retryable errors + reduced deadlines (C-012) in the
+   low-budget retry incident or explicitly mark it NOT RUN. Keep counters that
+   separate injected application failures from transport effects.
+4. Caller-cancellation storms are not available in artc_loadgen. Exercise
+   cancellation/hedge races with the existing deterministic held-back-backend
+   harness; do not equate a cancellation-ignoring backend with caller churn.
+5. The load generator stores at most 10,000 decision samples. At 500 RPS and
+   one in 100 decisions this caps near 33 minutes. The soak must use sparse or
+   segmented decisions and check final outstanding callbacks, leases, timers,
+   attempts, and route inflight.
+6. `lab/run_phase2_experiments.sh` suppresses qdisc and stress cleanup errors;
+   that is not fail-closed. Fix/verify cleanup or do not rely on that script for
+   Phase 4 evidence. Compose teardown alone does not prove measured recovery.
+7. Require explicit healthy -> fault -> recovery times, exact targets and
+   injection acknowledgments, seed/event log, cleanup proof, invalidation on
+   generator lag, and a calibrated offered-load base before calling a case 5x.
+8. A one-hour healthy soak is credible if the Phase 2 30-minute evidence is
+   reused, resource monitoring has adequate samples, and post-fault/steady-state
+   behavior plus final drain are checked. Extend only on suspicious evidence.
+   Five-to-ten independent matched trials are appropriate for selected headline
+   comparisons; do not repeat a full baseline ladder for every matrix cell.
+9. A2 root egress netem affects A2->B as well as router->A2. Do not claim an
+   isolated router-to-replica link fault from that injection. Service B delay
+   is configured at startup; restarting B to change it adds a process fault.
+10. Mark external exporter outage NOT APPLICABLE because the repository has no
+    exporter/collector; dynamic removal/reload is NOT APPLICABLE because the
+    configured replica set is static. Missing fuzz targets, allocator-failure
+    injection, unsupported packet modes, and 6h+ soaks are NOT RUN, not passes.
+    CI automation absent from this repository is NOT RUN, not a local gate.
+
+Suggested compact retained set:
+
+- burst + single slow A2, including matched hedge-off/on trials;
+- burst + all replicas slow;
+- packet loss + finite retry budget, plus deterministic UNAVAILABLE budget test;
+- Service B slowdown + A2 CPU saturation, with dependency calls verified;
+- short deadlines + load increase and a small deadline-gate ablation;
+- recovery + immediate load spike, with eligibility, limit, and settling traces;
+- deterministic caller-cancel/hedge, deadline/retry-timer, and shutdown-fence
+  interleavings;
+- selected multi-faults A (burst + A2 CPU + B delay), B (loss + UNAVAILABLE +
+  low budget + reduced deadlines/elevated load), C (straggler + hedge + caller
+  cancellation in test harness), D (recovery + spike), and E (shutdown across
+  separate active-hedge/retry/cancel request cohorts).
+
+Also require checks for recovery/reintegration, post-cancel work separately for
+cancellation-aware/ignoring servers, route/attempt/timer/lease bounds, qdisc and
+process cleanup, and a real process shutdown smoke. Keep negative results such
+as deadline-gate no-benefit, AIMD settling limits, and unsupported p999 visible.
+
+No product feature or algorithm redesign is necessary to execute this set.

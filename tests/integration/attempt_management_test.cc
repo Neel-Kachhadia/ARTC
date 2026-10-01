@@ -953,6 +953,8 @@ TEST(AttemptManagerIntegrationTest, HedgeIsSuppressedWhenEveryReplicaIsSlow) {
 
 TEST(AttemptManagerIntegrationTest,
      HedgeIsSuppressedWhenOnlyFastReplicaIsRecovering) {
+  constexpr auto kTargetLatency = 60ms;
+  constexpr double kTargetLatencyUs = 60'000.0;
   artc::rpc::testing::AttemptTestDriver driver;
   HeldBackend a1("A1");
   HeldBackend a2("A2");
@@ -966,7 +968,7 @@ TEST(AttemptManagerIntegrationTest,
   }
 
   auto config = controller_config();
-  config.aimd.target_latency = 20ms;
+  config.aimd.target_latency = kTargetLatency;
   config.aimd.minimum_window_samples = 1000;
   config.aimd.control_interval = 100ms;
   config.health.degraded_latency_ratio = 1000.0;
@@ -1026,7 +1028,7 @@ TEST(AttemptManagerIntegrationTest,
   for (std::size_t index = 0; index < 12 && warmed; ++index) {
     const auto replica = index % backends.size();
     warmed = invoke_and_finish(replica, grpc::Status::OK,
-                               replica == 2 ? 0ms : 25ms, index + 1);
+                               replica == 2 ? 0ms : 100ms, index + 1);
   }
   bool fast_history = false;
   bool slow_pair_healthy = false;
@@ -1050,7 +1052,7 @@ TEST(AttemptManagerIntegrationTest,
     fast_history = [&] {
       const auto snapshot = router.controller_snapshot();
       return snapshot && snapshot->replicas[2].latency_samples >= 4 &&
-             snapshot->replicas[2].latency_p95_us < 20'000.0;
+             snapshot->replicas[2].latency_p95_us < kTargetLatencyUs;
     }();
     slow_pair_healthy = [&] {
       const auto snapshot = router.controller_snapshot();
@@ -1058,8 +1060,8 @@ TEST(AttemptManagerIntegrationTest,
                              artc::routing::HealthState::kHealthy &&
              snapshot->replicas[1].health ==
                              artc::routing::HealthState::kHealthy &&
-             snapshot->replicas[0].latency_p95_us > 20'000.0 &&
-             snapshot->replicas[1].latency_p95_us > 20'000.0;
+             snapshot->replicas[0].latency_p95_us > kTargetLatencyUs &&
+             snapshot->replicas[1].latency_p95_us > kTargetLatencyUs;
     }();
   }
   const bool a3_recovering = a3_became_unavailable && wait_until([&] {
@@ -1091,12 +1093,12 @@ TEST(AttemptManagerIntegrationTest,
           artc::routing::HealthState::kHealthy &&
       final_control_snapshot->replicas[1].health ==
           artc::routing::HealthState::kHealthy &&
-      final_control_snapshot->replicas[0].latency_p95_us > 20'000.0 &&
-      final_control_snapshot->replicas[1].latency_p95_us > 20'000.0 &&
+      final_control_snapshot->replicas[0].latency_p95_us > kTargetLatencyUs &&
+      final_control_snapshot->replicas[1].latency_p95_us > kTargetLatencyUs &&
       final_control_snapshot->replicas[2].health ==
           artc::routing::HealthState::kRecovering &&
       final_control_snapshot->replicas[2].latency_samples >= 4 &&
-      final_control_snapshot->replicas[2].latency_p95_us < 20'000.0;
+      final_control_snapshot->replicas[2].latency_p95_us < kTargetLatencyUs;
   const auto before = router.attempt_snapshot();
   if (hedge_timer) driver.deliver(*hedge_timer);
   const bool hedge_decided = wait_until([&] {
@@ -1126,6 +1128,7 @@ TEST(AttemptManagerIntegrationTest,
        snapshot.pending_backend_callbacks == 0;
   }));
   const auto settled = router.attempt_snapshot();
+  const auto settled_control = router.controller_snapshot();
 
   router.begin_shutdown();
   router_server->Shutdown();
@@ -1133,11 +1136,39 @@ TEST(AttemptManagerIntegrationTest,
 
   EXPECT_TRUE(warmed);
   EXPECT_TRUE(a3_became_unavailable);
-  EXPECT_TRUE(fast_history);
-  EXPECT_TRUE(slow_pair_healthy);
+  EXPECT_TRUE(fast_history)
+      << "A3 samples="
+      << (settled_control && settled_control->replicas.size() == 3
+              ? settled_control->replicas[2].latency_samples
+              : 0)
+      << " p95_us="
+      << (settled_control && settled_control->replicas.size() == 3
+              ? settled_control->replicas[2].latency_p95_us
+              : 0.0);
+  EXPECT_TRUE(slow_pair_healthy)
+      << "A1 p95_us="
+      << (settled_control && settled_control->replicas.size() == 3
+              ? settled_control->replicas[0].latency_p95_us
+              : 0.0)
+      << " A2 p95_us="
+      << (settled_control && settled_control->replicas.size() == 3
+              ? settled_control->replicas[1].latency_p95_us
+              : 0.0);
   EXPECT_TRUE(a3_recovering);
   EXPECT_TRUE(primary_entered);
-  EXPECT_TRUE(final_scenario_present);
+  EXPECT_TRUE(final_scenario_present)
+      << "A1 p95_us="
+      << (final_control_snapshot && final_control_snapshot->replicas.size() == 3
+              ? final_control_snapshot->replicas[0].latency_p95_us
+              : 0.0)
+      << " A2 p95_us="
+      << (final_control_snapshot && final_control_snapshot->replicas.size() == 3
+              ? final_control_snapshot->replicas[1].latency_p95_us
+              : 0.0)
+      << " A3 p95_us="
+      << (final_control_snapshot && final_control_snapshot->replicas.size() == 3
+              ? final_control_snapshot->replicas[2].latency_p95_us
+              : 0.0);
   EXPECT_TRUE(hedge_timer.has_value());
   EXPECT_TRUE(hedge_decided);
   EXPECT_EQ(after_decision.hedge_overload_denied_total,

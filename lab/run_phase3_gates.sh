@@ -232,6 +232,7 @@ python3 -m py_compile lab/validate_artifacts.py
 docker compose -f "$COMPOSE_FILE" config --quiet
 git diff --check
 
+cmake --preset debug
 cmake --build build/debug -j"$JOBS"
 ctest --test-dir build/debug --output-on-failure
 
@@ -287,7 +288,8 @@ cmake -S . -B build/phase2-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON -DCMAKE_C_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
   -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
   -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread' "${FETCH_SOURCE_ARGS[@]}"
-cmake --build build/phase2-tsan -j"$JOBS"
+# TSan-instrumented protoc needs ASLR disabled for this process tree on Linux.
+setarch "$(uname -m)" -R cmake --build build/phase2-tsan -j"$JOBS"
 setarch "$(uname -m)" -R ctest --test-dir build/phase2-tsan --output-on-failure \
   -R 'AttemptManagerIntegrationTest|AttemptBudgetTest|AttemptPolicyOnly|ControllerRaceTest'
 

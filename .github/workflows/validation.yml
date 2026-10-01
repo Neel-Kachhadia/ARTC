@@ -1,0 +1,43 @@
+name: ARTC validation
+
+on:
+  pull_request:
+  push:
+    branches: [main, phase4/production-validation]
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  presubmit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ clang pkg-config libssl-dev
+      - name: Build and run compiler, unit, lifecycle, and sanitizer gates
+        env:
+          ARTC_BUILD_JOBS: 2
+          ARTC_RUN_ID: ci-phase4-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash lab/run_phase3_gates.sh --code-only
+      - name: Reject malformed runtime configuration
+        env:
+          ARTC_RUN_ID: ci-config-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash lab/run_phase4_config_matrix.sh
+      - name: Run seeded state-machine campaign nightly
+        if: github.event_name == 'schedule'
+        env:
+          ARTC_FUZZ_MAX_DURATION_SEC: 300
+          ARTC_RUN_ID: ci-fuzz-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash lab/run_phase4_state_fuzz.sh
+      - name: Retain validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artc-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/runs/
+          if-no-files-found: ignore
+          retention-days: 7

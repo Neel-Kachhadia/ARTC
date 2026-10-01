@@ -226,3 +226,9 @@ time_to_steady_state
 ```
 
 A mechanism that identifies failure but never restores recovered capacity is considered incorrect.
+
+## 14. Phase 4 coverage reconciliation
+
+[`phase4_fault_coverage.csv`](phase4_fault_coverage.csv) records all 107 fault and compound IDs above, plus 13 risk-selected pairwise interactions. Every row has an explicit status, the test or experiment used, the evidence path, and any limitation. `PASS WITH LIMITATION` means the measured behavior passed within the stated narrower scope. `NOT APPLICABLE` means the capability is outside ARTC's implemented boundary. `NOT RUN` means the capability is in scope but has no valid matching experiment. Invalid or failed early chaos runs remain in their original run directories and are not promoted to passing coverage.
+
+The final valid seeded incident set covers replica straggling with hedging and short deadlines, all-replica slowdown with a load step, A2 CPU plus Service B slowdown, packet loss with UNAVAILABLE/retry pressure and an A3 restart, and replica recovery with a traffic spike. See the `C-001`–`C-012` and `PW-001`–`PW-013` rows for the exact selection and evidence. The matrix intentionally leaves unsupported impairment types and unrun resource-exhaustion cases visible.

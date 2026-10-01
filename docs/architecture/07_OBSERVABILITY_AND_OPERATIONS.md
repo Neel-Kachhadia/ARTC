@@ -2,32 +2,28 @@
 
 ## 1. Observability principle
 
-ARTC must explain its own decisions without making observability a request-path dependency.
+Observability is diagnostic and must not be a request-path dependency.
+Benchmark comparisons use the same generator sampling and resource-monitoring
+settings for each policy.
 
-Two modes are supported:
-
-- **benchmark mode:** low-overhead metrics and limited/sampled tracing;
-- **diagnostic mode:** richer sampled decision logs/traces for root-cause analysis.
-
-Baseline and ARTC comparisons must use equivalent observability settings.
-
-## 2. Telemetry topology
+## 2. Current implementation
 
 ```text
-ARTC / services OTel SDK
-          │
-          ▼
-OpenTelemetry Collector
-      ┌───┴────┐
-      ▼        ▼
-Prometheus   Tempo
-      \        /
-        Grafana
+ARTC counters/controller snapshots -> shutdown summary + Prometheus text on stdout
+open-loop generator -> result manifest, latency histograms, sampled decisions
+lab resource monitors -> CPU, memory, process, and container CSV artifacts
 ```
 
-The benchmark generator remains the source of truth for headline latency percentiles.
+The benchmark generator remains the source of truth for headline latency
+percentiles. The current runtime has no live scrape endpoint, OpenTelemetry
+SDK/exporter, trace pipeline, collector, or dashboard. Those are deployment
+integrations for future work, not current support claims.
 
-## 3. Required metrics
+## 3. Production integration signals
+
+The following names describe useful signals for a future production telemetry
+integration. They are a design target, not a claim that every signal is
+currently emitted.
 
 ### Workload
 
@@ -117,6 +113,9 @@ Do not collapse all timing into one histogram during diagnosis.
 
 ## 5. Decision diagnostics
 
+The load generator writes bounded sampled decision rows for benchmark analysis.
+ARTC does not currently emit per-request decision logs.
+
 A sampled decision record may contain:
 
 ```text
@@ -140,7 +139,7 @@ Diagnostics must never leak secrets or create unbounded storage by default.
 
 ## 6. Tracing
 
-Trace spans may include:
+Distributed tracing is not currently implemented. If added, spans may include:
 
 ```text
 logical request
@@ -155,7 +154,8 @@ Sampling policy is explicit. Full tracing is not required for benchmark truth.
 
 ## 7. Fault event correlation
 
-Fault controller emits timestamped events with scenario ID. Grafana/analysis can overlay:
+Fault tooling records timestamped events with scenario ID. Offline analysis can
+overlay:
 
 ```text
 fault start
@@ -176,11 +176,11 @@ ARTC startup sequence:
 1. parse configuration;
 2. validate all safety constraints;
 3. initialize gRPC channels/stubs;
-4. initialize bounded telemetry exporters best-effort;
+4. initialize process-local counters and snapshots;
 5. initialize controller snapshot;
 6. start serving only after mandatory components are ready.
 
-Observability backends are non-mandatory dependencies.
+No telemetry backend is required to start or serve requests.
 
 ## 9. Graceful shutdown
 
@@ -191,7 +191,7 @@ Shutdown contract:
 3. allow bounded drain or cancel active requests per configured policy;
 4. cancel alarms/timers;
 5. stop controller after request observations are safely quiesced;
-6. best-effort bounded telemetry flush;
+6. print the final attempt summary and Prometheus text to stdout;
 7. release channels/resources in ownership order;
 8. exit within configured maximum shutdown interval.
 
@@ -199,13 +199,13 @@ Every step is tested under concurrency.
 
 ## 10. Health/readiness
 
-If exposed, health endpoints distinguish:
+If a health endpoint is added, it should distinguish:
 
 - process alive;
 - ready to accept traffic;
 - degraded internal controller/telemetry state.
 
-Telemetry backend failure alone does not make request serving unready.
+There is currently no external telemetry backend or health endpoint dependency.
 
 ## 11. Operational resource bounds
 
@@ -214,9 +214,7 @@ Document and expose configuration for:
 - maximum route concurrency;
 - maximum simultaneous attempts/request;
 - maximum total attempts/request;
-- maximum telemetry queue;
-- maximum diagnostic sample rate;
 - shutdown grace period;
-- any bounded pending queue.
 
-No implicit unbounded collection is permitted.
+The runtime currently uses no telemetry queue or request queue. Future
+diagnostic buffers and any pending queue must have explicit bounds.

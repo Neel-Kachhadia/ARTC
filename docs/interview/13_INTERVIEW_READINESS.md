@@ -1,314 +1,195 @@
 # 13 — Interview Readiness
 
-## 1. Interview objective
-
-ARTC must be explainable as a real engineering system, not as a memorized feature list.
-
-The expected signal is:
-
-> This engineer understands latency distributions, overload, request amplification, concurrency ownership, failure containment, measurement integrity, and where the design stops being valid.
-
-## 2. Three explanation depths
-
-### 30-second version
-
-> ARTC is a C++23 gRPC traffic controller for tail latency under stragglers and overload. It combines deadline-aware admission, adaptive concurrency, replica-aware routing, bounded hedging, and retry budgets. I built a deterministic fault lab and open-loop benchmark harness to measure p99/p999, deadline-goodput, recovery, and backend amplification, then validated the request lifecycle with deterministic race tests, sanitizers, fuzzing, and long-running stress/soak tests.
-
-Do not add performance numbers until measured and committed.
-
-### 2-minute version
-
-Structure:
-
-1. tail-latency problem;
-2. request-path architecture;
-3. why admission/routing/hedging/retries need coordination;
-4. one difficult correctness problem;
-5. benchmark methodology;
-6. one measured tradeoff;
-7. limitation/negative result.
-
-### 15–30 minute deep dive
-
-Be prepared to draw and defend:
-
-- request lifecycle/state machine;
-- adaptive concurrency feedback loop;
-- retry/hedge amplification controls;
-- benchmark methodology and coordinated omission;
-- one production-style incident reproduction;
-- one concurrency bug/root cause;
-- one result where ARTC loses or provides little value.
-
-## 3. Five flagship code areas
-
-### AttemptManager — C++/concurrency centerpiece
-
-Be able to explain:
-
-- ownership;
-- concurrent callback races;
-- exactly-once completion;
-- cancellation;
-- timer lifecycle;
-- shutdown;
-- why a mutex/CAS choice is correct;
-- how TSan and deterministic tests validate it.
-
-### AdaptiveConcurrencyController — systems/control centerpiece
-
-Explain:
-
-- why unbounded concurrency creates queueing collapse;
-- AIMD behavior;
-- sampling window;
-- overshoot/settling/oscillation;
-- bounds and fallback;
-- why more sophisticated Gradient-style control was not the starting point.
-
-### ReplicaSelector — routing centerpiece
-
-Explain:
-
-- why round robin fails under heterogeneous stragglers;
-- score inputs;
-- stale-health risk;
-- fairness/recovery;
-- comparison with least-inflight, EWMA, P2C-style baselines.
-
-### Benchmark generator — performance centerpiece
-
-Explain:
-
-- open-loop vs closed-loop;
-- coordinated omission;
-- scheduled arrival vs actual issue;
-- HdrHistogram;
-- p999 sample requirements;
-- repeated runs and raw artifacts.
-
-### Fault lab — reliability centerpiece
-
-Explain:
-
-- deterministic faults;
-- link-specific netem;
-- cgroup/resource isolation;
-- failure + recovery phases;
-- compound failures;
-- why chaos without reproducibility is weak evidence.
-
-## 4. Required tradeoff answers
-
-For every mechanism answer four questions:
-
-```text
-Why does it exist?
-What does it cost?
-When does it help?
-When does it hurt?
-```
-
-### Hedging
-
-Why: reduce isolated straggler tail.
-
-Cost: duplicate backend work.
-
-Helps: one path/replica is slow while alternatives are healthy.
-
-Hurts: cluster-wide overload.
-
-Containment: budget + distinct target + deadline + global overload awareness.
-
-### Retries
-
-Why: recover transient failures.
-
-Cost: extra attempts and delayed completion.
-
-Helps: brief transport/backend unavailability.
-
-Hurts: widespread dependency failure.
-
-Containment: idempotency + bounded attempts + retry budget + backoff + jitter + deadline.
-
-Phase 3 implementation facts to explain:
-
-- `MethodPolicy` is looked up by the exact gRPC method. Unknown methods default
-  to non-idempotent, with hedging and retry disabled and one total attempt.
-- Automatic duplicates require explicit idempotency. Retry defaults to
-  `UNAVAILABLE`; method-specific retryable statuses are validated.
-- The hard runtime ceiling is three total attempts and two active attempts.
-  Only one hedge is allowed, and a retry waits for the current attempt group to
-  fail.
-- The logical Phase 2 admission permit covers the request and remains held
-  until every local backend callback drains. Each attempt holds its own replica
-  lease. This avoids a second concurrency controller while bounding local
-  attempt concurrency by the request limit times two.
-- Cancellation stops timers and cancels active calls best effort. An ignoring
-  backend can keep working after the caller receives its one result; the lab
-  reports that wasted work separately.
-
-### Adaptive admission
-
-Why: keep queueing near useful capacity.
-
-Cost: controlled rejections and controller complexity.
-
-Helps: overload/bursts.
-
-Hurts: poor estimator/controller tuning can underutilize healthy capacity.
-
-Containment: bounds + conservative startup + stability measurement.
-
-## 5. Questions ARTC should let you answer from evidence
-
-### Architecture
-
-- Why a proxy/data-plane layer instead of modifying each backend?
-- Why keep controller state in memory?
-- Why no Redis/database?
-- Why use gRPC's own async machinery instead of adding Asio/io_uring to V1?
-- Why unary RPC only?
-- What changes for streaming?
-
-### Distributed systems
-
-- What is a straggler?
-- Why does p99 matter when average latency looks fine?
-- How can retries cause cascading failure?
-- When does hedging make the system worse?
-- What happens during a partial partition?
-- What happens when every replica is slow?
-- How do you reintroduce a recovered replica safely?
-- What if health observations are stale?
-
-### C++
-
-- Who owns request state?
-- Can gRPC callbacks run concurrently?
-- What races exist between completion, deadline, hedge timer, and cancellation?
-- Why use an atomic versus a mutex in a given location?
-- What memory ordering is required and why?
-- How do you avoid use-after-free during shutdown?
-- How did ASan/TSan find or rule out classes of bugs?
-
-### Performance
-
-- What is coordinated omission?
-- Why open-loop traffic?
-- Why can throughput increase while user experience gets worse?
-- What is deadline-goodput?
-- How is request amplification measured?
-- How many samples make p999 meaningful?
-- How do you measure ARTC's healthy-path overhead?
-
-### Reliability/testing
-
-- Why isn't TSan enough?
-- How do you deterministically reproduce a race?
-- What does fuzzing add beyond unit tests?
-- How are compound failures selected?
-- What happens if observability is down?
-- What happens during shutdown with active hedges/retries?
-
-## 6. Design decisions worth documenting as ADRs
-
-Prepare concise evidence for:
-
-- gRPC callback API and native timers;
-- no second event loop in V1;
-- unary scope;
-- in-memory state;
-- AIMD first;
-- explicit AttemptManager;
-- independent hedge/retry budgets;
-- open-loop benchmark generator;
-- HdrHistogram/raw artifacts as benchmark truth.
-
-## 7. Mandatory real defect stories
-
-During implementation, preserve at least one meaningful defect story in sanitized technical form:
-
-```text
-symptom
-production risk
-minimal deterministic reproducer
-root cause
-why earlier tests missed it
-fix
-new invariant/regression test
-```
-
-Never invent a story for interviews. Use a real failure found during development.
-
-## 8. Flagship experiment stories
-
-The final repo should make these easy to discuss:
-
-1. healthy proxy overhead;
-2. isolated straggler;
-3. all-replica overload;
-4. burst/control-loop response;
-5. retry storm;
-6. failure and recovery;
-7. hedge latency-vs-amplification curve;
-8. cancellation-aware vs cancellation-ignoring backend.
-
-Each experiment needs one graph with one clear takeaway.
-
-## 9. Production-vs-project honesty
-
-State clearly what V1 does and what a fleet production deployment would add.
-
-Implemented V1:
-
-```text
-unary RPCs
-single ARTC process per lab deployment
-static replica set
-in-memory adaptive state
-deterministic fault environment
-```
-
-Potential production extensions:
-
-```text
-service discovery
-dynamic configuration
-mTLS/authn/authz
-multi-instance/fleet rollout semantics
-canarying
-fleet-level control/telemetry
-Kubernetes integration where deployment requires it
-```
-
-Knowing what was intentionally omitted is a senior signal.
-
-## 10. Resume bullets
-
-Do not finalize until benchmark numbers exist.
-
-Template 1:
-
-> Built a C++23 adaptive gRPC traffic layer combining deadline-aware admission, replica-aware routing, adaptive concurrency, and bounded speculative execution; reduced measured p99 latency by **X%** under reproducible straggler workloads while limiting backend attempt amplification to **Y%**.
-
-Template 2:
-
-> Designed a deterministic distributed-systems fault laboratory covering network delay/loss, CPU saturation, dependency failure, retry storms, recovery, and request-lifecycle races; validated correctness with ASan/UBSan/TSan, state-machine fuzzing, and multi-hour soak tests across **N** modeled scenarios.
-
-Only use values generated by retained artifacts.
-
-## 11. Interview completion gate
-
-Before calling the project interview-ready, you must be able to:
-
-- draw the architecture from memory in ~60 seconds;
-- explain each controller's cost and failure mode;
-- explain one race from actual code;
-- explain one benchmark pitfall and how the harness avoids it;
-- defend why excluded technologies were unnecessary;
-- show raw evidence behind the headline result;
-- identify where ARTC performs worse than simpler approaches;
-- discuss how the design would change at much larger scale.
+This document is an evidence guide, not a script. Every number below points to
+retained Phase 4 artifacts; short comparisons are descriptive and scoped to
+one shared Linux host.
+
+## 30-second explanation
+
+> I built ARTC, a C++23 unary-gRPC traffic layer for controlling tail latency and overload across a static replica pool. It combines deadline-aware admission, replica health, adaptive concurrency, and bounded idempotency-aware retries and hedges. A scoped open-loop fault lab records latency, goodput, rejections, resource samples, and backend amplification. A one-hour healthy run completed 900,000 requests at 250 per second with no rejections and 1.0 attempt amplification. The implementation is tested with deterministic callback races, compiler and sanitizer gates, seeded state sequences, and recovery experiments. It is a single-process prototype, not a fleet-wide service mesh.
+
+## Two-minute explanation
+
+Tail latency gets worse when a small number of backend requests become
+stragglers, while unbounded concurrency and retries can turn that delay into a
+larger outage. ARTC sits between clients and a configured set of unary gRPC
+replicas. It uses request deadlines for admission, an adaptive controller to
+bound route concurrency, and replica health/latency for selection.
+
+The hardest lifecycle boundary is one logical request that can own multiple
+backend attempts. `AttemptManager` owns the terminal decision, timers, attempt
+accounting, and cancellation; a request can have at most two active attempts
+and three total. Retries happen after an attempt group fails, hedges overlap a
+slow attempt, separate budgets cap their aggregate use, and automatic duplicate
+work requires an explicit idempotency policy. Deadlines and shutdown are
+rechecked at dispatch boundaries.
+
+I tested it with an open-loop generator that records scheduled arrival, actual
+issue, completion, and issue lag, alongside attempt metadata and raw latency
+histograms. The one-hour healthy run measured p50 1.123 ms, p95 1.529 ms, and
+p99 1.732 ms over 900,000 observations. Under one slow-backend overload case,
+ARTC shed most offered calls; I report that as bounded containment with low
+goodput, not as a latency win. A single straggler trial showed lower p99 with a
+5 ms hedge but 1.33x amplification, so that observation is not a stable causal
+claim. The controller also kept increasing its limit during low demand, and a
+deadline-feasibility experiment reduced goodput in some cases. Those are
+limitations I would investigate before deployment-specific tuning.
+
+## Architecture and correctness answers
+
+### What problem does ARTC solve, and why a proxy?
+
+It coordinates admission, routing, deadlines, and duplicate-attempt policy at
+one request boundary. That makes amplification and logical completion visible
+across replicas without putting a separate policy implementation into every
+backend. The current deployment is one configured process; it does not provide
+fleet-wide coordination.
+
+### Why C++ and gRPC callbacks? Why no database?
+
+The lab exercises asynchronous gRPC call lifetimes and bounded state in a
+systems-language implementation. It uses gRPC's callback API and timers rather
+than adding a second event loop. Controller state is ephemeral feedback state,
+not durable business data; on restart it is rebuilt from observations. A
+database would not add a correctness guarantee the current single-process
+design needs.
+
+### Why AIMD? What is its limitation?
+
+AIMD provides a small, bounded controller with an explainable increase and
+overload-decrease rule. Its response depends on sampling and traffic; the
+oscillatory test showed the limit continuing to grow during low-demand waves
+and reaching its cap by the second high wave. That is a measured settling and
+demand-tracking limitation, not a reason to claim a new controller is already
+validated.
+
+### How do admission and recovery work?
+
+Admission checks the monotonic deadline and current concurrency snapshot before
+creating a logical request. One permit accounts for the request; each backend
+attempt has its own replica lease. Failed replicas cool down and recover through
+observed successful probes before they rejoin ordinary selection. Tests cover
+restart/reintegration and a seeded slow/healthy/down/healthy sequence.
+
+### Hedge versus retry? Why idempotency and separate budgets?
+
+A hedge is concurrent work intended to escape an isolated straggler. A retry is
+later work after the current attempt group fails. Both consume capacity, so
+separate token budgets make their costs visible and bounded. Automatic
+duplicate attempts require explicit idempotency; unknown methods default to
+non-idempotent and one attempt. Neither mechanism creates capacity when all
+replicas or a shared dependency are slow.
+
+### How does exactly-one completion work?
+
+The manager serializes terminal-state commitment under its synchronization
+boundary. The winner commits one logical result, requests cancellation of
+losers, and later callbacks only account their attempts; they cannot commit a
+second result. Deterministic tests force completion/deadline/cancel/timer
+orders, then assert one terminal transition and balanced permits, leases, and
+callback drain.
+
+### What if the backend ignores cancellation? What happens at shutdown?
+
+Cancellation is best effort. The caller still gets at most one logical result,
+but an ignoring server may keep doing work. The lab records cancelled attempts
+and post-cancel/wasted work separately. Shutdown closes admission and dispatch,
+cancels timers/calls, and drains registered callbacks before destroying shared
+state; selected timer, dispatch-fence, primary, and hedge schedules are tested.
+
+## Benchmarking and failure answers
+
+### How does the harness address coordinated omission?
+
+Arrivals are scheduled independently of previous completion. Each run records
+scheduled arrival, actual issue, completion, issue-lag histogram, and the
+maximum lag. The manifest marks generator saturation or excessive lag invalid;
+invalid runs are retained but excluded from comparisons.
+
+### Why report goodput with latency? Can ARTC route around global overload?
+
+Fast rejections can make a latency percentile look small. For example, with
+Service B slowed and 2,000 offered requests/s, the measured workload admitted
+3,378 of 40,000 scheduled calls and rejected 36,622. When all replicas were
+slow, 4,000 requests were rejected and goodput was zero. Those values describe
+load shedding and absent capacity, not successful fast service.
+
+### What can you claim about p99 or p999?
+
+The healthy soak has 900,000 completed observations and supports its reported
+p50/p95/p99 summary. It is below the project's one-million-observation gate
+for a serious RPC p999 claim, so I do not use RPC p999 as a headline. Policy
+ladder and ablation rows are one trial each; close values are not ranked.
+
+### What did you learn about deadline gating and hedging?
+
+Earlier valid deadline-feasibility runs reduced goodput without reducing
+deadline misses in some conditions. One straggler sweep favored a 5 ms hedge
+over 20/50 ms delays, but it was one trial per setting and incurred 1.33x
+amplification. These are workload-specific negative and positive observations,
+not general settings.
+
+### How are faults reproducible and safe?
+
+The Compose fault runner records a seed and ordered events, verifies project
+and service identity before changing a target, restores injected faults, and
+checks scoped cleanup and recovery. It does not change host firewall rules or
+global network interfaces. The environment is single-host and not resource
+isolated, which limits causal interpretation of short performance trials.
+
+## Real defect story: hedge suppression and a recovering replica
+
+- **Symptom:** the controller started a hedge although every eligible healthy
+  alternate was already slow.
+- **Why it was subtle:** the global-overload scan considered a replica in
+  `Recovering` state with a fast historical latency sample. The hedge selector
+  itself only allowed `Healthy` replicas, so the two checks reasoned about
+  different candidate sets.
+- **Reproduction:** a deterministic test held the primary, set two healthy
+  replicas above the latency target, and gave a third recovering replica a
+  stale fast sample. The before-fix log showed a hedge was started.
+- **Fix:** the overload scan now applies the same `Healthy` eligibility rule as
+  secondary selection.
+- **Regression:** `HedgeIsSuppressedWhenOnlyFastReplicaIsRecovering` asserts an
+  overload denial, no hedge dispatch, and no hedge-token consumption.
+- **Evidence:** `artifacts/reviews/phase4-hedge-recovering-before-fix.log`,
+  `artifacts/reviews/phase4-p0-regressions-after-fix.log`, and
+  `tests/integration/attempt_management_test.cc`.
+
+## Design evolution
+
+1. Phase 1 built the reproducible unary-gRPC lab and open-loop generator.
+2. Phase 2 added request deadlines, replica state, immutable controller
+   snapshots, adaptive concurrency, and logical admission permits.
+3. Phase 3 separated a logical request from backend attempts and bounded
+   idempotency-aware hedging/retries with independent budgets.
+4. Phase 4 kept the algorithms stable, corrected the demonstrated recovering
+   replica hedge bug, added a deadline/retry timer race regression, and
+   validated failures, cleanup, recovery, and measured limitations.
+
+## Verified resume bullets
+
+- Built a C++23 unary-gRPC traffic layer with deadline-aware admission,
+  adaptive replica routing, and idempotency-aware bounded retries/hedges;
+  completed 900,000 requests at 250 RPS in a one-hour healthy soak with zero
+  rejections and 1.00 attempt amplification.
+- Built a scoped seeded Docker fault lab and deterministic lifecycle tests;
+  validated GCC/Clang builds, ASan/UBSan/LSan/TSan gates, 32 deterministic
+  state-sequence seeds, restart/recovery, and a 20-minute faulted soak while
+  preserving invalid and unfavorable results.
+
+## Evidence to open during an interview
+
+- Healthy soak manifest and resources:
+  `artifacts/runs/phase4_healthy_soak_20261001/phase2-soak/`
+- Faulted soak manifest and resources:
+  `artifacts/runs/phase4_faulted_soak_20261001/phase2-soak/`
+- Baseline, overload, recovery, and load-step runs:
+  `artifacts/runs/phase4_baseline_20261001/phase2/`
+- Policy/ablation and focused control profile:
+  `artifacts/runs/phase4_ablation_20261001/phase2/`
+- Explicit fault dispositions:
+  `docs/failures/phase4_fault_coverage.csv`
+- PRR and requirement mapping:
+  `docs/architecture/15_PRODUCTION_READINESS_REVIEW.md` and
+  `docs/architecture/12_TRACEABILITY_MATRIX.md`

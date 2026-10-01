@@ -11,8 +11,9 @@ if [[ ! "$RUN_ID" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   exit 2
 fi
 if [[ "$PHASE2_START_AT" != A && "$PHASE2_START_AT" != I && \
-      "$PHASE2_START_AT" != DEADLINE ]]; then
-  echo "ARTC_PHASE2_START_AT must be A, I, or DEADLINE" >&2
+      "$PHASE2_START_AT" != DEADLINE && "$PHASE2_START_AT" != ABLATION && \
+      "$PHASE2_START_AT" != OSCILLATION ]]; then
+  echo "ARTC_PHASE2_START_AT must be A, I, DEADLINE, ABLATION, or OSCILLATION" >&2
   exit 2
 fi
 PROJECT="${COMPOSE_PROJECT_NAME:-artc-phase2-$RUN_ID}"
@@ -55,18 +56,64 @@ MONITOR_PID=""
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
 clear_faults() {
-  local service
+  local service queues result=0
   for service in "${FAULT_SERVICES[@]}"; do
-    compose exec -T "$service" tc qdisc del dev eth0 root >/dev/null 2>&1 || true
+    if ! compose exec -T "$service" tc qdisc del dev eth0 root >/dev/null; then
+      echo "failed to remove netem from scoped target $service" >&2
+      result=1
+      continue
+    fi
+    if ! queues="$(compose exec -T "$service" tc qdisc show dev eth0)"; then
+      echo "could not verify qdisc cleanup on scoped target $service" >&2
+      result=1
+    elif grep -Eq '(^|[[:space:]])netem([[:space:]]|$)' <<<"$queues"; then
+      echo "netem remains on scoped target $service" >&2
+      result=1
+    fi
   done
-  FAULT_SERVICES=()
+  if ((result == 0)); then FAULT_SERVICES=(); fi
+  assert_no_netem || result=1
+  return "$result"
 }
 
 stop_stress() {
   if [[ "$STRESS_ACTIVE" == true ]]; then
-    compose exec -T a2 pkill -TERM -x stress-ng >/dev/null 2>&1 || true
+    compose exec -T a2 sh -ec '
+      pkill -TERM -x stress-ng >/dev/null 2>&1 || true
+      for attempt in 1 2 3 4 5; do
+        if ! pgrep -x stress-ng >/dev/null 2>&1; then exit 0; fi
+        sleep 0.2
+      done
+      pgrep -ax stress-ng >&2 || true
+      exit 1
+    '
     STRESS_ACTIVE=false
   fi
+}
+
+assert_no_netem() {
+  local service container_id queues
+  for service in service-b a1 a2 a3; do
+    container_id="$(compose ps -q "$service")"
+    [[ -n "$container_id" ]] || continue
+    queues="$(compose exec -T "$service" tc qdisc show dev eth0)"
+    if grep -Eq '(^|[[:space:]])netem([[:space:]]|$)' <<<"$queues"; then
+      echo "unexpected netem qdisc on scoped target $service" >&2
+      return 1
+    fi
+  done
+}
+
+assert_fault_cleanup() {
+  if ((${#FAULT_SERVICES[@]} != 0)); then
+    echo "tracked netem faults remain: ${FAULT_SERVICES[*]}" >&2
+    return 1
+  fi
+  if [[ "$STRESS_ACTIVE" == true ]]; then
+    echo "tracked stress-ng fault remains active" >&2
+    return 1
+  fi
+  assert_no_netem
 }
 
 on_exit() {
@@ -83,8 +130,15 @@ on_exit() {
   stop_stress || result=1
   if [[ "$LAB_UP" == true ]]; then
     clear_faults || result=1
+    assert_fault_cleanup || result=1
     compose down --remove-orphans || result=1
     LAB_UP=false
+    local remaining
+    remaining="$(docker ps --all --quiet --filter "label=com.docker.compose.project=$PROJECT")" || result=1
+    if [[ -n "$remaining" ]]; then
+      echo "Compose project containers remain after cleanup: $PROJECT" >&2
+      result=1
+    fi
   fi
   exit "$result"
 }
@@ -185,6 +239,12 @@ run_load() {
 apply_netem() {
   local service="$1"
   local delay="$2"
+  local queues
+  queues="$(compose exec -T "$service" tc qdisc show dev eth0)"
+  if grep -Eq '(^|[[:space:]])netem([[:space:]]|$)' <<<"$queues"; then
+    echo "refusing to stack a netem qdisc on scoped target $service" >&2
+    return 1
+  fi
   compose exec -T "$service" tc qdisc add dev eth0 root netem delay "$delay"
   FAULT_SERVICES+=("$service")
 }
@@ -213,6 +273,7 @@ fi
 docker info >/dev/null
 LAB_UP=true
 compose up -d --wait --wait-timeout 90
+assert_fault_cleanup
 check_health service-b:50052
 check_health a1:50051
 check_health a2:50051
@@ -247,7 +308,8 @@ restart_service_b 50000
 run_load H-global-overload router:50050 constant "${ARTC_PHASE2_OVERLOAD_RPS:-2000}" 20000 1000
 fi
 
-if [[ "$PHASE2_START_AT" != DEADLINE ]]; then
+if [[ "$PHASE2_START_AT" != DEADLINE && "$PHASE2_START_AT" != ABLATION && \
+      "$PHASE2_START_AT" != OSCILLATION ]]; then
 restart_service_b 0
 start_policy artc_adaptive
 apply_netem a1 150ms
@@ -281,6 +343,7 @@ fi
 # fast enough to complete inside the caller deadline.
 HAD_AIMD_TARGET="${ARTC_AIMD_TARGET_LATENCY_US+x}"
 PREVIOUS_AIMD_TARGET="${ARTC_AIMD_TARGET_LATENCY_US-}"
+if [[ "$PHASE2_START_AT" != ABLATION && "$PHASE2_START_AT" != OSCILLATION ]]; then
 export ARTC_AIMD_TARGET_LATENCY_US="${ARTC_PHASE2_DEADLINE_TARGET_LATENCY_US:-75000}"
 restart_service_b 50000
 apply_netem a2 75ms
@@ -299,8 +362,10 @@ if [[ "$HAD_AIMD_TARGET" == x ]]; then
 else
   unset ARTC_AIMD_TARGET_LATENCY_US
 fi
+fi
 
 # Selector and concurrency ablations plus the four Phase 1 baselines.
+if [[ "$PHASE2_START_AT" != OSCILLATION ]]; then
 for policy in round_robin least_inflight ewma_latency p2c_latency_inflight \
               artc_selector_only adaptive_concurrency_only \
               artc_adaptive_no_deadline artc_adaptive; do
@@ -320,9 +385,44 @@ start_policy artc_adaptive 0
 run_load overhead-phase2-adaptive router:50050 constant \
   "${ARTC_PHASE2_OVERHEAD_RPS:-1000}" 15000 5000
 
+# Representative Phase 3 policy under one isolated straggler. Earlier policy
+# and ablation rows keep speculation disabled so their routing/control effects
+# remain comparable.
+export ARTC_EXECUTE_IDEMPOTENCY=idempotent
+export ARTC_EXECUTE_HEDGING_ENABLED=true ARTC_EXECUTE_RETRY_ENABLED=true
+export ARTC_EXECUTE_MAX_TOTAL_ATTEMPTS=3 ARTC_EXECUTE_MAX_RETRIES=2
+export ARTC_EXECUTE_HEDGE_DELAY_MIN_US=20000 ARTC_EXECUTE_HEDGE_DELAY_MAX_US=20000
+export ARTC_HEDGE_BUDGET_CAPACITY=32 ARTC_HEDGE_BUDGET_REFILL_PER_SECOND=4
+export ARTC_RETRY_BUDGET_CAPACITY=16 ARTC_RETRY_BUDGET_REFILL_PER_SECOND=2
+start_policy artc_adaptive
+apply_netem a2 150ms
+run_load phase3-full-policy-straggler router:50050 constant \
+  "${ARTC_PHASE2_NORMAL_RPS:-200}" 20000 5000
+clear_faults
+run_load phase3-full-policy-recovery router:50050 constant 100 5000 5000
+
 build/release/artc_control_bench --output "$OUT_DIR/control-microbench" \
   --iterations "${ARTC_CONTROL_BENCH_ITERATIONS:-1000000}" \
   >"$OUT_DIR/control-microbench.stdout"
-python3 lab/analyze_phase2.py "$OUT_DIR" >"$OUT_DIR/analysis.stdout"
+fi
+
+if [[ "$PHASE2_START_AT" == OSCILLATION ]]; then
+  start_policy artc_adaptive
+  for wave in low-1 high-1 low-2 high-2 low-3 high-3; do
+    case "$wave" in
+      low-*) rate="${ARTC_PHASE2_STABILITY_NORMAL_RPS:-200}" ;;
+      high-*) rate="${ARTC_PHASE2_OSCILLATION_HIGH_RPS:-1000}" ;;
+    esac
+    run_load "oscillation-$wave" router:50050 constant "$rate" 10000 5000
+  done
+fi
+
+if [[ "$PHASE2_START_AT" == ABLATION ]]; then
+  echo "phase2_ablation_complete=$OUT_DIR"
+elif [[ "$PHASE2_START_AT" == OSCILLATION ]]; then
+  echo "phase4_oscillation_complete=$OUT_DIR"
+else
+  python3 lab/analyze_phase2.py "$OUT_DIR" >"$OUT_DIR/analysis.stdout"
+fi
 
 echo "phase2_experiments_complete=$OUT_DIR"

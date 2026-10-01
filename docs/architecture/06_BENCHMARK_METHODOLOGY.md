@@ -193,7 +193,17 @@ For important result points:
 - report median across runs plus dispersion/confidence representation;
 - preserve per-run histograms rather than averaging percentiles incorrectly.
 
-For p999, ensure sample counts are large enough that the tail contains a meaningful number of observations. Do not publish p999 from tiny runs as if it were stable.
+The load-generator histogram emits an RPC p999 only at 1,000,000 or more observations. Older retained Phase 4 manifests were generated with a 100,000-sample internal threshold; their sub-million p999 fields are descriptive raw artifacts, not published claims. Do not treat them as stable RPC p999 results.
+
+The generator's `process_cpu_seconds` and `cpu_seconds_per_completed_request`
+fields come from `std::clock()` inside `artc_loadgen`; they measure generator
+CPU, not ARTC router or backend CPU. Router-container samples collected by
+`docker stats` are a separate signal and share the benchmark host.
+
+Latency histograms include all completed calls, including fast admission
+rejections. Unless outcome-separated histograms are recorded, percentiles from
+rejection-heavy runs describe the pooled offered workload, not successful
+responses alone. Always report admitted goodput and rejections alongside them.
 
 ## 10. Run validity checks
 

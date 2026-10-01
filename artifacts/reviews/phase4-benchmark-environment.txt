@@ -1,0 +1,26 @@
+ARTC Phase 4 benchmark environment snapshot
+Collected: 2026-10-01
+
+Host: Linux x86_64, kernel 7.0.0-34-generic (Ubuntu 24.04)
+CPU: 13th Gen Intel Core i9-13980HX; 24 cores / 32 logical CPUs
+CPU governor: powersave
+Memory: 15 GiB visible to the host at collection time
+Allowed CPU set: 0-31
+Compiler/build tools: GCC 13.3.0, Clang 18.1.3, CMake 3.28.3, Ninja 1.11.1
+Container tools: Docker Engine 29.1.3, Compose 2.40.3
+
+Router, backend services, generator, and local monitoring ran on this same host.
+No CPU affinity or per-process cgroup isolation was applied. The host was not
+frequency-locked; the powersave governor and shared-host contention can affect
+short-run latency and CPU measurements. Treat the Phase 4 policy ladder and
+single-run ablations as descriptive, not as a controlled cross-policy ranking.
+The one-hour and 20-minute soaks used the same local Compose topology and
+recorded per-run manifests, histograms, and resource samples.
+
+Benchmark source of truth: each run manifest records git revision, seed,
+scheduled/issued/completed counts, issue lag, saturation/validity, latency
+histogram summary, attempt accounting, and controller/configuration values.
+The machine was on the `powersave` governor when this environment snapshot was
+collected. `perf` hardware counters could not be read because host
+`perf_event_paranoid=4`; host settings were not changed. Callgrind was used for
+focused control-path and lifecycle profiles instead.

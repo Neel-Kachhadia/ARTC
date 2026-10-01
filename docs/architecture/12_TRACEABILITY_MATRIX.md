@@ -40,16 +40,22 @@ Focused Phase 3 run directories are written under `artifacts/runs/<run-id>/` and
 
 ## Fault-model traceability
 
-Before release, every fault ID from `../failures/04_FAILURE_MODEL_AND_FAULT_LAB.md` must appear in a generated or maintained coverage table:
+[`../failures/phase4_fault_coverage.csv`](../failures/phase4_fault_coverage.csv) reconciles every catalog fault/compound ID plus 13 selected pairwise interactions to status, test or job, artifact, and limitation. It separates PASS, PASS WITH LIMITATION, NOT APPLICABLE, and NOT RUN. Invalid or incomplete fault attempts remain preserved in their run directories and do not count as passing evidence.
 
-```text
-fault_id
-scenario_file
-test/job name
-expected invariants
-last passing commit
-artifact location
-```
+## Phase 4 requirement traceability
+
+| Requirement | Invariant | Implementation | Test / scenario | Metric | Canonical evidence | Limitation | Interview question |
+|---|---|---|---|---|---|---|---|
+| Deadline cannot create a late retry | I-REQ-006/007, I-BUD-001 | AttemptManager timer and dispatch deadline fences | `DeadlinePreventsQueuedAndDispatchingRetry` (pending timer and dispatch fence) | terminal count, retry starts/tokens, deadline misses, active callbacks | `tests/integration/attempt_management_test.cc`; targeted Debug/ASan/TSan logs | deterministic test controls callback order; wall-clock scheduling is covered separately | What if the retry timer and deadline fire together? |
+| Retry and hedge work stays bounded | I-ATT-001/002, I-BUD-001/002/006 | Fixed attempt slots, separate token budgets, method policy | retry/hedge budget tests; C-002/C-003/C-011 | attempts/logical request, retry/hedge starts, token use, wasted work | `artifacts/reviews/phase4-hardening-evidence.txt`; `artifacts/runs/phase4_chaos_20261001_r10/chaos/` | Chaos and policy comparisons are single-host trials | How do budgets contain a cluster-wide retry or hedge storm? |
+| Degradation recovers without losing capacity permanently | I-REP-005 | Replica health state, recovery probes, selector | A2 recovery/flapping; C-007 | health transitions, traffic share, recovery-probe success | `artifacts/runs/phase4_baseline_20261001/phase2/recovery-*`; `artifacts/runs/phase4_chaos_20261001_r4/chaos/` | One seeded flapping sequence; no long statistical false-recovery study | How does a recovered replica regain traffic safely? |
+| Load failure is bounded and visible | I-ADM-001/002, I-RES-001 | Admission gate and adaptive concurrency | H global slowdown; three low/high load cycles | offered/admitted/goodput/rejected, route limit, inflight | `artifacts/runs/phase4_baseline_20261001/phase2/H-global-overload/`; `artifacts/runs/phase4_oscillation_20261001/phase2/` | 2,000 RPS with slow Service B shows shedding; healthy host saturation beyond that was not established | Does ARTC fail by queueing or shedding? |
+| Healthy and faulted runs do not show monotonic resource drift | I-RES-001..006 | Bounded snapshots, attempts, timers, callback drain | One-hour healthy and 20-minute faulted soak | RSS, FD, threads, sockets, processes, samples, attempts | `artifacts/runs/phase4_healthy_soak_20261001/phase2-soak/`; `artifacts/runs/phase4_faulted_soak_20261001/phase2-soak/` | Short soak does not prove behavior over days; RSS rose modestly without monotonic growth flag | What evidence rules out permit/timer/resource leaks? |
+| Invalid configuration fails before serving | I-CFG-001 | Startup validation and bounded policy parser | 31-case configuration matrix | startup exit/result and rejected cases | `artifacts/runs/phase4_config_matrix_20261001_r3/config-matrix/result.txt` | Runtime reconfiguration is not supported | Why reject rather than silently correct unsafe values? |
+| Fault tooling cannot escape the ARTC lab | I-OPS-001 | Verified Compose labels/service identities and scoped cleanup | Seeded chaos, netem/process cleanup checks | leftover containers/networks/qdiscs/stress processes | `lab/run_phase4_chaos.sh`; final chaos event/result artifacts | Fault modes not exposed by the allowlist remain NOT APPLICABLE or NOT RUN | How does an incident runner avoid host-wide damage? |
+| Benchmark conclusions account for offered load and uncertainty | I-BENCH-001/002 | Open-loop scheduler, issue-lag validity, HdrHistogram artifacts | Phase 4 baseline/ablation/soak runs | scheduled/issued/completed, issue lag, p50/p95/p99, goodput, amplification | `artifacts/runs/phase4_ablation_20261001/phase2/`; run manifests/histograms | Policy rows are one trial each; p999 is omitted below supported sample counts | How does the generator detect coordinated omission or saturation? |
+
+The benchmark and fault coverage artifacts preserve unfavorable outcomes and invalid runs. README and interview claims must link to the exact manifest or deterministic test row rather than a lone percentile.
 
 ## Interview traceability
 

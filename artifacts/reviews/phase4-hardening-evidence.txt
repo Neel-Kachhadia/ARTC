@@ -1,0 +1,38 @@
+Phase 4 hardening evidence packet
+Date: 2026-10-01
+Branch: phase4/production-validation
+
+Command: bash lab/run_phase4_config_matrix.sh
+Exit: 0
+Result: 26 malformed CLI/environment configurations were rejected before service; default config bound an ephemeral loopback gRPC endpoint and printed the shutdown summary.
+Artifact: artifacts/runs/phase4_config_20261001_121753_95224/config-matrix/result.txt
+
+Command: build/debug/artc_unit_tests
+Exit: 0
+Result: 50/50 unit tests passed.
+
+Command: GTEST_FILTER=AttemptManagerIntegrationTest.RejectsMalformedBackendAddresses build/debug/artc_integration_tests
+Exit: 0
+Result: malformed endpoints, empty set, and duplicate replica identity were rejected.
+
+Command: bash lab/run_phase3_gates.sh
+Exit: 0
+Result: phase3_gates=pass; run_id=phase3_20261001_121912_95857.
+This updated-source regression gate built and tested GCC Debug, GCC Release, Clang, ASan/UBSan/LSan, and TSan; then it built the Compose image and ran scoped Docker fault scenarios. Debug CTest 97/97; Clang CTest 97/97; selected ASan/UBSan/LSan 46/46; selected TSan 48/48. Release build/CTest completed successfully. Docker scenarios and cleanup passed.
+
+Representative Docker results from the updated-source run:
+- Healthy Phase 3: three independent 200-call trials, 200 admitted, zero rejected, amplification 1.0, generator not saturated.
+- Isolated straggler: 450 calls each; 5ms hedge trial p99 154111us unhedged vs 9063us hedged; hedge rate 1/3, amplification 1.333, attempt bound 2. This is a single run per hedge configuration, not a headline estimate.
+- Cluster-wide slow: four 50-call trials and a 100-call recovery trial; hedge amplification 1.1 in first trial and 1.0 after budget/suppression, recovery completed, cleanup verified.
+- Transient UNAVAILABLE: 200 calls, amplification 1.15, generator not saturated.
+- Retry storm: four 50-call runs; retry token budget depleted and then denied further attempts; bounded amplification; recovery/cleanup verified.
+- Non-idempotent: 150 calls, zero speculative attempts.
+- Cancellation-aware and cancellation-ignoring: 200 calls each, amplification 1.335; demonstrates best-effort cancellation and measured post-cancel work.
+- Short deadline: 50 calls, zero hedges; deadline suppression observed.
+
+Seeded state campaign artifact: artifacts/runs/phase4_fuzz_20261001_120726_91200/state-fuzz/campaign.json (16 seeds; see per-seed logs and seeds.csv).
+
+Prior focused evidence:
+- artifacts/reviews/phase4-p0-regressions-after-fix.log
+- artifacts/reviews/phase4-seed17-after-fix.log
+- artifacts/runs/phase4_fuzz_20261001_120417_90273/state-fuzz/seed-17.log (preserved pre-harness-adjustment counterexample: generated repeated UNAVAILABLE events exhausted replica health before dispatch; fuzz model now raises failure threshold so it tests AttemptManager ordering independently of health exhaustion)

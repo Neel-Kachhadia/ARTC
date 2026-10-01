@@ -4,12 +4,20 @@
 
 Passing compilation and unit tests is not sufficient for ARTC. CI is organized by cost and confidence.
 
+The repository workflow in `.github/workflows/validation.yml` runs the
+non-privileged code gates on pull requests and pushes. It covers diff whitespace
+validation, GCC Debug and Release, Clang Debug and Release, deterministic tests,
+selected ASan/UBSan/LSan tests, and targeted TSan. A seeded state-event campaign runs nightly. Docker `NET_ADMIN`,
+netem, long soaks, and full benchmark matrices remain local/manual release
+commands because hosted runners do not provide the lab's verified network and
+resource topology.
+
 ## 2. Presubmit / every PR
 
 Mandatory:
 
 ```text
-format/lint checks
+`git diff --check` whitespace validation
 CMake configure + clean build
 warnings policy
 unit tests
@@ -22,6 +30,9 @@ configuration-validation tests
 integration smoke test
 benchmark smoke test
 ```
+
+The repository has no checked-in formatter configuration, so CI does not run
+`clang-format`; style-only reformatting is kept out of Phase 4 correctness work.
 
 No known sanitizer/race finding may be waived without a documented, narrowly scoped suppression and justification.
 

@@ -21,6 +21,8 @@ using SteadyClock = std::chrono::steady_clock;
 using SteadyTime = SteadyClock::time_point;
 using SystemTime = std::chrono::system_clock::time_point;
 
+inline constexpr std::uint32_t kHardMaxRouteConcurrency = 65'536;
+
 enum class AdmissionResult {
   kAdmitted,
   kDeadlineExpired,

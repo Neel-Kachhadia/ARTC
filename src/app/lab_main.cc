@@ -16,7 +16,46 @@
 #include <utility>
 #include <vector>
 
+extern char** environ;
+
 namespace {
+
+constexpr std::string_view kKnownRouterEnvironment[]{
+    "ARTC_AIMD_MIN_LIMIT", "ARTC_AIMD_MAX_LIMIT", "ARTC_AIMD_INITIAL_LIMIT",
+    "ARTC_AIMD_ALPHA", "ARTC_AIMD_BETA", "ARTC_AIMD_INTERVAL_MS",
+    "ARTC_AIMD_MIN_SAMPLES", "ARTC_AIMD_TARGET_LATENCY_US",
+    "ARTC_AIMD_OVERLOAD_ERROR_FRACTION", "ARTC_DEADLINE_MARGIN_US",
+    "ARTC_DEFAULT_DEADLINE_MS", "ARTC_DECISION_SAMPLE_EVERY",
+    "ARTC_HEALTH_MIN_SAMPLES", "ARTC_HEALTH_FAILURES",
+    "ARTC_HEALTH_RECOVERY_SUCCESSES", "ARTC_HEALTH_RECOVERY_COOLDOWN_MS",
+    "ARTC_HEALTH_DEGRADED_RATIO", "ARTC_HEALTH_RECOVERED_RATIO",
+    "ARTC_RECOVERY_PROBE_PERIOD", "ARTC_ATTEMPT_MAX_TOTAL",
+    "ARTC_ATTEMPT_MAX_ACTIVE", "ARTC_ATTEMPT_JITTER_SEED",
+    "ARTC_ATTEMPT_MINIMUM_BUDGET_US", "ARTC_HEDGE_BUDGET_CAPACITY",
+    "ARTC_HEDGE_BUDGET_REFILL_PER_SECOND", "ARTC_RETRY_BUDGET_CAPACITY",
+    "ARTC_RETRY_BUDGET_REFILL_PER_SECOND", "ARTC_EXECUTE_IDEMPOTENCY",
+    "ARTC_EXECUTE_HEDGING_ENABLED", "ARTC_EXECUTE_RETRY_ENABLED",
+    "ARTC_EXECUTE_ALLOW_SAME_REPLICA_RETRY", "ARTC_EXECUTE_MAX_TOTAL_ATTEMPTS",
+    "ARTC_EXECUTE_MAX_RETRIES", "ARTC_EXECUTE_HEDGE_DELAY_MIN_US",
+    "ARTC_EXECUTE_HEDGE_DELAY_MAX_US", "ARTC_EXECUTE_RETRY_BACKOFF_BASE_MS",
+    "ARTC_EXECUTE_RETRY_BACKOFF_MAX_MS", "ARTC_EXECUTE_RETRY_JITTER_MAX_MS",
+    "ARTC_EXECUTE_RETRYABLE_STATUSES", "ARTC_ROUTING_POLICY", "ARTC_RUN_ID",
+    "ARTC_GIT_REVISION", "ARTC_WORKTREE_DIRTY", "ARTC_COMPOSE_PROJECT",
+};
+
+void validate_router_environment() {
+  for (char** entry = ::environ; entry != nullptr && *entry != nullptr; ++entry) {
+    const std::string_view assignment(*entry);
+    const auto separator = assignment.find('=');
+    const auto name = assignment.substr(0, separator);
+    if (!name.starts_with("ARTC_")) continue;
+    if (std::find(std::begin(kKnownRouterEnvironment),
+                  std::end(kKnownRouterEnvironment), name) ==
+        std::end(kKnownRouterEnvironment)) {
+      throw std::invalid_argument("unknown ARTC router configuration variable");
+    }
+  }
+}
 
 template <typename T>
 T parse_integer(std::string_view value) {
@@ -378,6 +417,7 @@ int main(int argc, char** argv) {
       return result;
     }
     if (role == "router" && argc >= 9) {
+      validate_router_environment();
       std::vector<artc::rpc::ReplicaConfig> replicas;
       replicas.reserve(static_cast<std::size_t>(argc - 6));
       for (int index = 6; index < argc; ++index) {

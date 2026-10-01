@@ -18,6 +18,8 @@ struct AttemptBudgetConfig {
   double refill_per_second{0.0};
 };
 
+inline constexpr std::uint32_t kHardMaxAttemptBudgetCapacity = 1'000'000;
+
 struct AttemptBudgetSnapshot {
   double tokens{0.0};
   std::uint32_t available{0};
@@ -37,6 +39,9 @@ class TokenBudget final {
         last_refill_(now) {
     static_assert(std::is_same_v<Tag, HedgeBudgetTag> ||
                   std::is_same_v<Tag, RetryBudgetTag>);
+    if (config_.capacity > kHardMaxAttemptBudgetCapacity) {
+      throw std::invalid_argument("attempt budget capacity exceeds hard limit");
+    }
     if (!std::isfinite(config_.refill_per_second) ||
         config_.refill_per_second < 0.0) {
       throw std::invalid_argument("attempt budget refill must be finite and non-negative");
